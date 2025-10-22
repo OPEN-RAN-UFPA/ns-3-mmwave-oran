@@ -192,7 +192,7 @@ static ns3::GlobalValue g_trafficModel (
     " half nodes in full buffer and half nodes in bursty (1),"
     " bursty traffic (2),"
     " Mixed (3): 0.25 full buffer, 0.25 bursty 3Mbps, 0.25 bursty 0.75Mbps, 0.25 bursty 0.15Mbps",
-    ns3::UintegerValue (3), ns3::MakeUintegerChecker<uint8_t> ());
+    ns3::UintegerValue (0), ns3::MakeUintegerChecker<uint8_t> ());
 
 static ns3::GlobalValue g_nBsNoUesAlloc (
     "nBsNoUesAlloc",
@@ -229,7 +229,7 @@ static ns3::GlobalValue g_reducedPmValues ("reducedPmValues", "If true, use a su
 
 static ns3::GlobalValue g_outageThreshold ("outageThreshold",
                                            "SNR threshold for outage events [dB]",
-                                           ns3::DoubleValue (-5.0),
+                                           ns3::DoubleValue (-1000.0),
                                            ns3::MakeDoubleChecker<double> ());
 
 static ns3::GlobalValue g_basicCellId ("basicCellId", "The next value will be the first cellId",
@@ -244,10 +244,10 @@ static ns3::GlobalValue
     g_handoverMode ("handoverMode",
                     "HO euristic to be used,"
                     "can be only \"NoAuto\", \"FixedTtt\", \"DynamicTtt\",   \"Threshold\"",
-                    ns3::StringValue ("DynamicTtt"), ns3::MakeStringChecker ());
+                    ns3::StringValue ("NoAuto"), ns3::MakeStringChecker ());
 
 static ns3::GlobalValue g_e2TermIp ("e2TermIp", "The IP address of the RIC E2 termination",
-                                    ns3::StringValue ("127.0.0.1"), ns3::MakeStringChecker ());
+                                    ns3::StringValue ("10.244.0.240"), ns3::MakeStringChecker ());
 
 static ns3::GlobalValue
     g_enableE2FileLogging ("enableE2FileLogging",

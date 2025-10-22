@@ -269,7 +269,7 @@ class LteEnbNetDevice : public LteNetDevice
   private:
     bool m_isConstructed; ///< is constructed?
     bool m_isConfigured;  ///< is configured?
-
+    long long m_lastControlTimestamp;
     /**
      * \brief Propagate attributes and configuration to sub-modules.
      *
