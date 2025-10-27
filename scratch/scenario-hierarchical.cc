@@ -211,12 +211,15 @@ main (int argc, char *argv[])
   uint32_t bufferSize = uintegerValue.Get ();
   GlobalValue::GetValueByName ("basicCellId", uintegerValue);
   uint16_t basicCellId = uintegerValue.Get ();
+  (void) basicCellId;
   GlobalValue::GetValueByName ("enableTraces", booleanValue);
   bool enableTraces = booleanValue.Get ();
   GlobalValue::GetValueByName ("trafficModel", uintegerValue);
   uint8_t trafficModel = uintegerValue.Get ();
+  (void) trafficModel;
   GlobalValue::GetValueByName ("nBsNoUesAlloc", integerValue);
   int8_t nBsNoUesAlloc = integerValue.Get ();
+  (void) nBsNoUesAlloc;
   GlobalValue::GetValueByName ("positionAllocator", uintegerValue);
   uint8_t positionAllocator = uintegerValue.Get ();
   GlobalValue::GetValueByName ("outageThreshold",doubleValue);
@@ -291,7 +294,9 @@ main (int argc, char *argv[])
   double centerFrequency;
   double isd;
   int numAntennasMcUe;
+  (void) numAntennasMcUe;
   int numAntennasMmWave;
+  (void) numAntennasMmWave;
   std::string dataRate;
 
   GlobalValue::GetValueByName ("configuration", uintegerValue);
@@ -348,6 +353,7 @@ main (int argc, char *argv[])
   ipv4h.SetBase ("1.0.0.0", "255.0.0.0");
   Ipv4InterfaceContainer internetIpIfaces = ipv4h.Assign (internetDevices);
   Ipv4Address remoteHostAddr = internetIpIfaces.GetAddress (1);
+  (void) remoteHostAddr;
   Ipv4StaticRoutingHelper ipv4RoutingHelper;
   Ptr<Ipv4StaticRouting> remoteHostStaticRouting = ipv4RoutingHelper.GetStaticRouting (remoteHost->GetObject<Ipv4> ());
   remoteHostStaticRouting->AddNetworkRouteTo (Ipv4Address ("7.0.0.0"), Ipv4Mask ("255.0.0.0"), 1);
