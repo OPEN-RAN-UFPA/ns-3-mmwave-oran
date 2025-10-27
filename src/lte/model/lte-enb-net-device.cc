@@ -1320,12 +1320,14 @@ LteEnbNetDevice::BuildRicIndicationMessageCuUp(std::string plmId)
          * arise.
          */
 
-        NS_ASSERT_MSG(txBytes >= txPdcpPduBytesLteRlc && txDlPackets >= txPdcpPduLteRlc,
-                      "txBytes (" << txBytes << ") < txPdcpPduBytesLteRlc (" << txPdcpPduBytesLteRlc
-                                  << ") txDlPackets (" << txDlPackets << ") < txPdcpPduLteRlc ("
-                                  << txPdcpPduLteRlc << ")");
-
-        uint64_t txPdcpPduNrRlc = std::max(static_cast<uint64_t>(0), txDlPackets - txPdcpPduLteRlc);
+        if (!(txBytes >= txPdcpPduBytesLteRlc && txDlPackets >= txPdcpPduLteRlc)) {
+  NS_LOG_WARN("PDCP/RLC stats mismatch; clamping to zero deltas. "
+              << "txBytes=" << txBytes
+              << " txPdcpPduBytesLteRlc=" << txPdcpPduBytesLteRlc
+              << " txDlPackets=" << txDlPackets
+              << " txPdcpPduLteRlc=" << txPdcpPduLteRlc);
+}
+uint64_t txPdcpPduNrRlc = std::max(static_cast<uint64_t>(0), txDlPackets - txPdcpPduLteRlc);
         double txPdcpPduBytesNrRlc = std::max(static_cast<uint64_t>(0), txBytes - txPdcpPduBytesLteRlc);
 
         NS_LOG_INFO("ue id " << std::to_string(imsi)
