@@ -42,7 +42,7 @@
 #include "ns3/epc-helper.h"
 #include "ns3/mmwave-point-to-point-epc-helper.h"
 #include "ns3/lte-helper.h"
-#include "ns3/energy-heuristic.h"
+#include "ns3/energy-heuristic.h" // Embora não usemos heurísticas aqui, pode ser necessário para compilar
 
 using namespace ns3;
 using namespace mmwave;
@@ -67,15 +67,19 @@ BsStateTrace (std::string filename, Ptr<LteEnbNetDevice> ltedev, Ptr<LteEnbRrc> 
     << " "
     << "State" << std::endl;
   }
+  // Lê o mapa que indica se handover é permitido para cada célula secundária
   std::map<uint16_t, bool> entry = lte_rrc->GetAllowHandoverTo();
   for (auto it = entry.begin(); it != entry.end(); it++)
   {
-    uint64_t timestamp = ltedev->GetStartTime() + Simulator::Now ().GetMilliSeconds ();
-    outFile << Simulator::Now ().GetSeconds () << " " << timestamp << " "
+    // Calcula o timestamp UNIX em milissegundos
+    uint64_t unix_timestamp_ms = ltedev->GetStartTime() + Simulator::Now ().GetMilliSeconds ();
+    // Escreve: Tempo Simulação (s), Timestamp UNIX (ms), CellID, Estado (1=Permitido/ON, 0=Não Permitido/OFF)
+    outFile << Simulator::Now ().GetSeconds () << " " << unix_timestamp_ms << " "
     << it->first << " " << it->second << std::endl;
   }
 }
 
+// Função para imprimir a posição das UEs para gnuplot
 void
 PrintGnuplottableUeListToFile (std::string filename)
 {
@@ -105,6 +109,7 @@ PrintGnuplottableUeListToFile (std::string filename)
   }
 }
 
+// Função para imprimir a posição das eNBs/gNBs para gnuplot
 void
 PrintGnuplottableEnbListToFile (std::string filename)
 {
@@ -123,7 +128,7 @@ PrintGnuplottableEnbListToFile (std::string filename)
     {
       Ptr<LteEnbNetDevice> enbdev = node->GetDevice (j)->GetObject<LteEnbNetDevice> ();
       Ptr<MmWaveEnbNetDevice> mmdev = node->GetDevice (j)->GetObject<MmWaveEnbNetDevice> ();
-      if (enbdev)
+      if (enbdev) // eNB LTE (azul)
       {
         Vector pos = node->GetObject<MobilityModel> ()->GetPosition ();
         outFile << "set label \"" << enbdev->GetCellId () << "\" at " << pos.x << "," << pos.y
@@ -131,7 +136,7 @@ PrintGnuplottableEnbListToFile (std::string filename)
         "0.3 lc rgb \"blue\" offset 0,0"
         << std::endl;
       }
-      else if (mmdev)
+      else if (mmdev) // gNB mmWave (vermelho)
       {
         Vector pos = node->GetObject<MobilityModel> ()->GetPosition ();
         outFile << "set label \"" << mmdev->GetCellId () << "\" at " << pos.x << "," << pos.y
@@ -147,12 +152,12 @@ PrintGnuplottableEnbListToFile (std::string filename)
 
 // Parâmetros Comuns
 static ns3::GlobalValue g_simTime ("simTime", "Simulation time in seconds", ns3::DoubleValue (1.9), ns3::MakeDoubleChecker<double> (0.1, 1000.0));
-static ns3::GlobalValue g_ues ("ues", "Number of UEs for each mmWave ENB.", ns3::UintegerValue (7), ns3::MakeUintegerChecker<uint8_t> ());
+static ns3::GlobalValue g_ues ("ues", "Number of UEs for each mmWave ENB.", ns3::UintegerValue (3), ns3::MakeUintegerChecker<uint8_t> ()); // Ajustado para corresponder ao seu log
 static ns3::GlobalValue g_indicationPeriodicity ("indicationPeriodicity", "E2 Indication Periodicity reports (value in seconds)", ns3::DoubleValue (0.1), ns3::MakeDoubleChecker<double> (0.01, 2.0));
-static ns3::GlobalValue g_configuration ("configuration", "Set the wanted configuration to emulate [0,2]", ns3::UintegerValue (1), ns3::MakeUintegerChecker<uint8_t> ());
-static ns3::GlobalValue g_trafficModel ("trafficModel", "Type of the traffic model [0,3]", ns3::UintegerValue (0), ns3::MakeUintegerChecker<uint8_t> ());
-static ns3::GlobalValue q_useSemaphores ("useSemaphores", "If true, enables the use of semaphores for external environment control", ns3::BooleanValue (false), ns3::MakeBooleanChecker ());
-static ns3::GlobalValue g_controlFileName ("controlFileName", "The path to the control file for hierarchical actions", ns3::StringValue (""), ns3::MakeStringChecker ());
+static ns3::GlobalValue g_configuration ("configuration", "Set the wanted configuration to emulate [0,2]", ns3::UintegerValue (0), ns3::MakeUintegerChecker<uint8_t> ()); // Ajustado para corresponder ao seu log
+static ns3::GlobalValue g_trafficModel ("trafficModel", "Type of the traffic model [0,3]", ns3::UintegerValue (3), ns3::MakeUintegerChecker<uint8_t> ()); // Ajustado para corresponder ao seu log
+static ns3::GlobalValue q_useSemaphores ("useSemaphores", "If true, enables the use of semaphores for external environment control", ns3::BooleanValue (false), ns3::MakeBooleanChecker ()); // Ajustado para corresponder ao seu log de erro
+static ns3::GlobalValue g_controlFileName ("controlFileName", "The path to the control file for hierarchical actions", ns3::StringValue ("hierarchical_actions.csv"), ns3::MakeStringChecker ()); // Definido para o esperado
 //hierarchical_actions.csv
 // Parâmetros de Handover (do scenario-one)
 static ns3::GlobalValue g_hoSinrDifference ("hoSinrDifference", "The SINR value difference for which a handover is triggered", ns3::DoubleValue (3), ns3::MakeDoubleChecker<double> ());
@@ -173,23 +178,31 @@ static ns3::GlobalValue g_e2du ("e2du", "If true, send DU reports", ns3::Boolean
 static ns3::GlobalValue g_e2cuUp ("e2cuUp", "If true, send CU-UP reports", ns3::BooleanValue (true), ns3::MakeBooleanChecker ());
 static ns3::GlobalValue g_e2cuCp ("e2cuCp", "If true, send CU-CP reports", ns3::BooleanValue (true), ns3::MakeBooleanChecker ());
 static ns3::GlobalValue g_dataRate ("dataRate", "Set the data rate to be used [0=low, 1=high]", ns3::DoubleValue (0), ns3::MakeDoubleChecker<double> (0, 1));
-static ns3::GlobalValue g_reducedPmValues ("reducedPmValues", "If true, use a subset of the pm containers", ns3::BooleanValue (true), ns3::MakeBooleanChecker ());
-static ns3::GlobalValue g_outageThreshold ("outageThreshold", "SNR threshold for outage events [dB]", ns3::DoubleValue (-1000.0), ns3::MakeDoubleChecker<double> ());
+static ns3::GlobalValue g_reducedPmValues ("reducedPmValues", "If true, use a subset of the pm containers", ns3::BooleanValue (false), ns3::MakeBooleanChecker ()); // Ajustado para corresponder ao seu log
+static ns3::GlobalValue g_outageThreshold ("outageThreshold", "SNR threshold for outage events [dB]", ns3::DoubleValue (-5.0), ns3::MakeDoubleChecker<double> ()); // Ajustado para corresponder ao seu log
 static ns3::GlobalValue g_basicCellId ("basicCellId", "The next value will be the first cellId", ns3::UintegerValue (1), ns3::MakeUintegerChecker<uint8_t> ());
-static ns3::GlobalValue g_numberOfRaPreambles ("numberOfRaPreambles", "Number of RA preambles", ns3::UintegerValue (40), ns3::MakeUintegerChecker<uint8_t> ());
-static ns3::GlobalValue g_handoverMode ("handoverMode", "HO euristic to be used", ns3::StringValue ("NoAuto"), ns3::MakeStringChecker ());
+static ns3::GlobalValue g_numberOfRaPreambles ("numberOfRaPreambles", "Number of RA preambles", ns3::UintegerValue (40), ns3::MakeUintegerChecker<uint8_t> ()); // Ajustado para corresponder ao seu log
+static ns3::GlobalValue g_handoverMode ("handoverMode", "HO euristic to be used", ns3::StringValue ("DynamicTtt"), ns3::MakeStringChecker ()); // Ajustado para corresponder ao seu log
 static ns3::GlobalValue g_e2TermIp ("e2TermIp", "The IP address of the RIC E2 termination", ns3::StringValue ("127.0.0.1"), ns3::MakeStringChecker ());
 static ns3::GlobalValue g_enableE2FileLogging ("enableE2FileLogging", "If true, generate offline file logging instead of connecting to RIC", ns3::BooleanValue (true), ns3::MakeBooleanChecker ());
+
+// Adicionado RngRun para corresponder ao seu log
+static ns3::GlobalValue g_rngRun ("RngRun", "Seed for random number generation", ns3::UintegerValue (555), ns3::MakeUintegerChecker<uint32_t> ());
 
 int
 main (int argc, char *argv[])
 {
-  // LogComponentEnableAll (LOG_PREFIX_ALL);
+  // Configura o nível de log
+  // LogComponentEnableAll (LOG_PREFIX_ALL); // Descomente para log máximo
   LogComponentEnable ("ScenarioHierarchical", LOG_LEVEL_INFO);
+  // LogComponentEnable ("LteEnbNetDevice", LOG_LEVEL_DEBUG); // Descomente para depurar leitura do ficheiro
+  // LogComponentEnable ("LteEnbRrc", LOG_LEVEL_DEBUG); // Descomente para depurar HO e estado
 
+  // Define os limites do cenário
   double maxXAxis = 4000;
   double maxYAxis = 4000;
 
+  // Processa argumentos da linha de comando
   CommandLine cmd;
   cmd.Parse (argc, argv);
 
@@ -201,6 +214,7 @@ main (int argc, char *argv[])
   StringValue stringValue;
   DoubleValue doubleValue;
 
+  // Lê os valores dos parâmetros globais para variáveis locais
   GlobalValue::GetValueByName ("hoSinrDifference", doubleValue);
   double hoSinrDifference = doubleValue.Get ();
   GlobalValue::GetValueByName ("dataRate", doubleValue);
@@ -211,15 +225,15 @@ main (int argc, char *argv[])
   uint32_t bufferSize = uintegerValue.Get ();
   GlobalValue::GetValueByName ("basicCellId", uintegerValue);
   uint16_t basicCellId = uintegerValue.Get ();
-  (void) basicCellId;
+  (void) basicCellId; // Evita aviso de não utilizado
   GlobalValue::GetValueByName ("enableTraces", booleanValue);
   bool enableTraces = booleanValue.Get ();
   GlobalValue::GetValueByName ("trafficModel", uintegerValue);
   uint8_t trafficModel = uintegerValue.Get ();
-  (void) trafficModel;
+  (void) trafficModel; // Evita aviso de não utilizado
   GlobalValue::GetValueByName ("nBsNoUesAlloc", integerValue);
   int8_t nBsNoUesAlloc = integerValue.Get ();
-  (void) nBsNoUesAlloc;
+  (void) nBsNoUesAlloc; // Evita aviso de não utilizado
   GlobalValue::GetValueByName ("positionAllocator", uintegerValue);
   uint8_t positionAllocator = uintegerValue.Get ();
   GlobalValue::GetValueByName ("outageThreshold",doubleValue);
@@ -253,7 +267,19 @@ main (int argc, char *argv[])
   GlobalValue::GetValueByName ("enableE2FileLogging", booleanValue);
   bool enableE2FileLogging = booleanValue.Get ();
 
-  // --- Configurações Padrão do ns-3 (mescladas) ---
+  // --- CORREÇÃO: Adiciona leituras em falta ---
+  GlobalValue::GetValueByName ("numberOfRaPreambles", uintegerValue);
+  uint8_t numberOfRaPreambles = uintegerValue.Get ();
+  GlobalValue::GetValueByName ("e2TermIp", stringValue);
+  std::string e2TermIp = stringValue.Get ();
+  // --- FIM DA CORREÇÃO ---
+
+  // Aplica a seed RngRun
+  GlobalValue::GetValueByName("RngRun", uintegerValue);
+  RngSeedManager::SetRun (uintegerValue.Get ());
+
+
+  // --- Configurações Padrão do ns-3 (mescladas e corrigidas) ---
   Config::SetDefault ("ns3::LteEnbNetDevice::UseSemaphores", BooleanValue (useSemaphores));
   Config::SetDefault ("ns3::LteEnbNetDevice::ControlFileName", StringValue(controlFilename));
   Config::SetDefault ("ns3::LteEnbNetDevice::E2Periodicity", DoubleValue (indicationPeriodicity));
@@ -276,27 +302,37 @@ main (int argc, char *argv[])
   // Configuração RRC e Handover
   Config::SetDefault ("ns3::LteEnbRrc::OutageThreshold", DoubleValue (outageThreshold));
   Config::SetDefault ("ns3::LteEnbRrc::SecondaryCellHandoverMode", StringValue (handoverMode));
-  Config::SetDefault ("ns3::LteEnbRrc::HoSinrDifference", DoubleValue (hoSinrDifference)); // <-- Adicionado do scenario-one
+  Config::SetDefault ("ns3::LteEnbRrc::HoSinrDifference", DoubleValue (hoSinrDifference));
 
-  // Outras configurações
+  // Outras configurações (incluindo correções HARQ e RACH)
   Config::SetDefault ("ns3::MmWaveHelper::RlcAmEnabled", BooleanValue (rlcAmEnabled));
   Config::SetDefault ("ns3::MmWaveHelper::HarqEnabled", BooleanValue (harqEnabled));
+  Config::SetDefault ("ns3::MmWaveFlexTtiMacScheduler::HarqEnabled", BooleanValue (harqEnabled)); // Garante consistência
+  Config::SetDefault ("ns3::MmWavePhyMacCommon::NumHarqProcess", UintegerValue (100)); // --- CORREÇÃO HARQ ---
+  Config::SetDefault ("ns3::MmWaveEnbMac::NumberOfRaPreambles", UintegerValue (numberOfRaPreambles)); // Usa variável lida
+  Config::SetDefault ("ns3::MmWaveHelper::UseIdealRrc", BooleanValue (true)); // Comum nos outros
+  Config::SetDefault ("ns3::MmWaveHelper::BasicCellId", UintegerValue (basicCellId)); // Usa variável lida
+  Config::SetDefault ("ns3::MmWaveHelper::BasicImsi", UintegerValue ((basicCellId-1))); // Usa variável lida
+  Config::SetDefault ("ns3::MmWaveHelper::E2TermIp", StringValue (e2TermIp)); // Usa variável lida
+  Config::SetDefault ("ns3::ThreeGppChannelModel::UpdatePeriod", TimeValue (MilliSeconds (100.0))); // Comum nos outros
+  Config::SetDefault ("ns3::ThreeGppChannelConditionModel::UpdatePeriod", TimeValue (MilliSeconds (100))); // Comum nos outros
+  Config::SetDefault ("ns3::LteRlcAm::ReportBufferStatusTimer", TimeValue (MilliSeconds (10.0))); // Comum nos outros
+  Config::SetDefault ("ns3::LteRlcUmLowLat::ReportBufferStatusTimer", TimeValue (MilliSeconds (10.0))); // Comum nos outros
+  Config::SetDefault ("ns3::LteRlcUm::MaxTxBufferSize", UintegerValue (bufferSize * 1024 * 1024));
+  Config::SetDefault ("ns3::LteRlcUmLowLat::MaxTxBufferSize", UintegerValue (bufferSize * 1024 * 1024));
   Config::SetDefault ("ns3::LteRlcAm::MaxTxBufferSize", UintegerValue (bufferSize * 1024 * 1024));
+
 
   // --- Construção do Cenário (baseado no scenario-three) ---
 
-  // ... (O código de configuração de rede, nós, mobilidade, EPC, etc., é idêntico
-  //      e foi omitido por brevidade. A lógica abaixo é a mesma de scenario-three.cc,
-  //      que já é uma versão mais completa que a de scenario-one.cc)
-
-  // Carrier bandwidth in Hz
+  // Configuração de Frequência, Largura de Banda, ISD, Antenas e Data Rate
   double bandwidth;
   double centerFrequency;
   double isd;
   int numAntennasMcUe;
-  (void) numAntennasMcUe;
+  (void) numAntennasMcUe; // Evita aviso
   int numAntennasMmWave;
-  (void) numAntennasMmWave;
+  (void) numAntennasMmWave; // Evita aviso
   std::string dataRate;
 
   GlobalValue::GetValueByName ("configuration", uintegerValue);
@@ -323,21 +359,33 @@ main (int argc, char *argv[])
       break;
   }
 
+  // Aplica configurações de BW e Frequência Central
   Config::SetDefault ("ns3::MmWavePhyMacCommon::Bandwidth", DoubleValue (bandwidth));
   Config::SetDefault ("ns3::MmWavePhyMacCommon::CenterFreq", DoubleValue (centerFrequency));
 
+  // Cria Helpers
   Ptr<MmWaveHelper> mmwaveHelper = CreateObject<MmWaveHelper> ();
   mmwaveHelper->SetPathlossModelType ("ns3::ThreeGppUmiStreetCanyonPropagationLossModel");
+  // Adiciona configuração de ChannelConditionModel (presente no scenario-three)
+  mmwaveHelper->SetChannelConditionModelType ("ns3::ThreeGppUmiStreetCanyonChannelConditionModel");
+
+  // Configura Antenas (presente no scenario-three)
+  mmwaveHelper->SetUePhasedArrayModelAttribute("NumColumns", UintegerValue(std::sqrt(numAntennasMcUe)));
+  mmwaveHelper->SetUePhasedArrayModelAttribute("NumRows", UintegerValue(std::sqrt(numAntennasMcUe)));
+  mmwaveHelper->SetEnbPhasedArrayModelAttribute("NumColumns",UintegerValue(std::sqrt(numAntennasMmWave)));
+  mmwaveHelper->SetEnbPhasedArrayModelAttribute("NumRows", UintegerValue(std::sqrt(numAntennasMmWave)));
 
   Ptr<MmWavePointToPointEpcHelper> epcHelper = CreateObject<MmWavePointToPointEpcHelper> ();
   mmwaveHelper->SetEpcHelper (epcHelper);
 
+  // Define número de nós
   uint8_t nMmWaveEnbNodes = 7;
   uint8_t nLteEnbNodes = 1;
   GlobalValue::GetValueByName ("ues", uintegerValue);
-  uint32_t ues = uintegerValue.Get ();
-  uint8_t nUeNodes = ues * nMmWaveEnbNodes;
+  uint32_t ues_per_gnb = uintegerValue.Get (); // Renomeado para clareza
+  uint8_t nUeNodes = ues_per_gnb * nMmWaveEnbNodes;
 
+  // Cria nós EPC (PGW) e Host Remoto
   Ptr<Node> pgw = epcHelper->GetPgwNode ();
   NodeContainer remoteHostContainer;
   remoteHostContainer.Create (1);
@@ -345,19 +393,23 @@ main (int argc, char *argv[])
   InternetStackHelper internet;
   internet.Install (remoteHostContainer);
 
+  // Conecta Host Remoto ao PGW
   PointToPointHelper p2ph;
   p2ph.SetDeviceAttribute ("DataRate", DataRateValue (DataRate ("100Gb/s")));
   p2ph.SetDeviceAttribute ("Mtu", UintegerValue (2500));
+  // Adiciona Delay (presente no scenario-three)
+  p2ph.SetChannelAttribute ("Delay", TimeValue (Seconds (0.010)));
   NetDeviceContainer internetDevices = p2ph.Install (pgw, remoteHost);
   Ipv4AddressHelper ipv4h;
   ipv4h.SetBase ("1.0.0.0", "255.0.0.0");
   Ipv4InterfaceContainer internetIpIfaces = ipv4h.Assign (internetDevices);
   Ipv4Address remoteHostAddr = internetIpIfaces.GetAddress (1);
-  (void) remoteHostAddr;
+  (void) remoteHostAddr; // Evita aviso
   Ipv4StaticRoutingHelper ipv4RoutingHelper;
   Ptr<Ipv4StaticRouting> remoteHostStaticRouting = ipv4RoutingHelper.GetStaticRouting (remoteHost->GetObject<Ipv4> ());
   remoteHostStaticRouting->AddNetworkRouteTo (Ipv4Address ("7.0.0.0"), Ipv4Mask ("255.0.0.0"), 1);
 
+  // Cria nós UE e eNB/gNB
   NodeContainer ueNodes;
   NodeContainer mmWaveEnbNodes;
   NodeContainer lteEnbNodes;
@@ -368,12 +420,13 @@ main (int argc, char *argv[])
   allEnbNodes.Add (lteEnbNodes);
   allEnbNodes.Add (mmWaveEnbNodes);
 
+  // Posiciona eNBs/gNBs (Layout Hexagonal)
   Vector centerPosition = Vector (maxXAxis / 2, maxYAxis / 2, 3);
   Ptr<ListPositionAllocator> enbPositionAlloc = CreateObject<ListPositionAllocator> ();
-  enbPositionAlloc->Add (centerPosition); // LTE
-  enbPositionAlloc->Add (centerPosition); // Co-located mmWave
+  enbPositionAlloc->Add (centerPosition); // LTE eNB (CellID 1, provavelmente)
+  enbPositionAlloc->Add (centerPosition); // Co-located mmWave gNB (CellID 2, provavelmente)
 
-  for (int8_t i = 0; i < (nMmWaveEnbNodes - 1); ++i)
+  for (int8_t i = 0; i < (nMmWaveEnbNodes - 1); ++i) // Posiciona os 6 gNBs restantes
   {
     double x = isd * cos ((2 * M_PI * i) / (nMmWaveEnbNodes - 1));
     double y = isd * sin ((2 * M_PI * i) / (nMmWaveEnbNodes - 1));
@@ -385,35 +438,97 @@ main (int argc, char *argv[])
   enbmobility.SetPositionAllocator (enbPositionAlloc);
   enbmobility.Install (allEnbNodes);
 
-  // Lógica de mobilidade flexível do scenario-three
+  // Posiciona UEs (Lógica de mobilidade flexível do scenario-three)
   MobilityHelper uemobility;
-  Ptr<UniformRandomVariable> speed = CreateObject<UniformRandomVariable> ();
-  speed->SetAttribute ("Min", DoubleValue (minSpeed));
-  speed->SetAttribute ("Max", DoubleValue (maxSpeed));
+  Ptr<UniformRandomVariable> speedVar = CreateObject<UniformRandomVariable> (); // Renomeado para evitar conflito
+  speedVar->SetAttribute ("Min", DoubleValue (minSpeed));
+  speedVar->SetAttribute ("Max", DoubleValue (maxSpeed));
+  // Adiciona Random Variable para tempo de mudança de direção (do scenario-three)
+  Ptr<UniformRandomVariable> puntTimeDirection = CreateObject<UniformRandomVariable> ();
+  puntTimeDirection->SetAttribute ("Min", DoubleValue (1));
+  puntTimeDirection->SetAttribute ("Max", DoubleValue (3));
+  double timeDirection=puntTimeDirection->GetValue();
+
 
   switch (positionAllocator)
   {
-    case 0: {
+    case 0: { // Distribuição uniforme no disco central
       Ptr<UniformDiscPositionAllocator> uePositionAlloc = CreateObject<UniformDiscPositionAllocator> ();
       uePositionAlloc->SetX(centerPosition.x);
       uePositionAlloc->SetY(centerPosition.y);
       uePositionAlloc->SetRho(isd);
-      uemobility.SetMobilityModel("ns3::RandomWalk2dMobilityModel", "Speed", PointerValue(speed), "Bounds", RectangleValue(Rectangle(0, maxXAxis, 0, maxYAxis)));
+      // Usa RandomWalk2dMobilityModel com tempo (do scenario-three)
+      uemobility.SetMobilityModel("ns3::RandomWalk2dMobilityModel",
+                                  "Mode", StringValue("Time"),
+                                  "Time", StringValue(std::to_string(timeDirection) + "s"),
+                                  "Speed", PointerValue(speedVar),
+                                  "Bounds", RectangleValue(Rectangle(0, maxXAxis, 0, maxYAxis)));
       uemobility.SetPositionAllocator(uePositionAlloc);
       uemobility.Install(ueNodes);
       break;
     }
-    case 1: {
-      // Lógica complexa para alocar UEs em torno de um subconjunto de BSs.
-      // Omitido para brevidade, mas deve ser copiado do scenario-three.cc se necessário.
-      NS_LOG_WARN("Position Allocator 1 is complex and its logic should be copied from scenario-three.cc. Defaulting to Allocator 0.");
-      Ptr<UniformDiscPositionAllocator> uePositionAlloc = CreateObject<UniformDiscPositionAllocator> ();
-      uePositionAlloc->SetX(centerPosition.x);
-      uePositionAlloc->SetY(centerPosition.y);
-      uePositionAlloc->SetRho(isd);
-      uemobility.SetMobilityModel("ns3::RandomWalk2dMobilityModel", "Speed", PointerValue(speed), "Bounds", RectangleValue(Rectangle(0, maxXAxis, 0, maxYAxis)));
-      uemobility.SetPositionAllocator(uePositionAlloc);
-      uemobility.Install(ueNodes);
+    case 1: { // Alocação em torno de um subconjunto de BSs (lógica complexa do scenario-three)
+      if (nBsNoUesAlloc == -1)
+      {
+        NS_FATAL_ERROR("nBsNoUesAlloc (-1) incorrecto para positionAllocator=1.");
+      }
+      if (nBsNoUesAlloc >= nMmWaveEnbNodes)
+      {
+        NS_FATAL_ERROR("nBsNoUesAlloc (" << nBsNoUesAlloc << ") maior ou igual ao número de gNBs mmWave (" << nMmWaveEnbNodes << ").");
+      }
+
+      // Copia posições dos gNBs mmWave para um array
+      std::vector<Vector> bsCoords;
+      // Pula a posição do eNB LTE e do gNB co-localizado
+      // NOTA: Assume que enbPositionAlloc->GetNext() retorna na ordem: LTE, gNB central, gNBs periféricos
+      Ptr<ListPositionAllocator> tempAlloc = CreateObject<ListPositionAllocator>(*enbPositionAlloc); // Cria cópia para não alterar o original
+      tempAlloc->GetNext(); // Pula LTE eNB
+      for (int i = 0; i < nMmWaveEnbNodes; i++)
+      {
+        bsCoords.push_back(tempAlloc->GetNext());
+      }
+
+      // Embaralha as posições para escolher aleatoriamente quais BSs não terão UEs
+      std::srand(std::time(0)); // Usa time(0) para seed
+      std::random_shuffle(bsCoords.begin(), bsCoords.end());
+
+      NS_LOG_INFO("Alocando UEs em torno de " << (nMmWaveEnbNodes - nBsNoUesAlloc) << " gNBs mmWave.");
+
+      // Calcula quantos UEs por gNB ativo
+      uint32_t numActiveGnbs = nMmWaveEnbNodes - nBsNoUesAlloc;
+      uint32_t nodeGroupSize = nUeNodes / numActiveGnbs;
+      uint32_t nodeGroupSizeRest = nUeNodes % numActiveGnbs;
+      uint32_t ueIndexCounter = 0;
+
+      // Aloca UEs nos gNBs selecionados
+      for (uint32_t bsCoordIndex = 0; bsCoordIndex < numActiveGnbs; bsCoordIndex++)
+      {
+        Ptr<UniformDiscPositionAllocator> uePositionAlloc = CreateObject<UniformDiscPositionAllocator> ();
+        uePositionAlloc->SetX(bsCoords[bsCoordIndex].x);
+        uePositionAlloc->SetY(bsCoords[bsCoordIndex].y);
+        uePositionAlloc->SetRho(isd / 2); // Raio menor em torno da BS específica
+        uemobility.SetMobilityModel("ns3::RandomWalk2dMobilityModel",
+                                    "Mode", StringValue("Time"),
+                                    "Time", StringValue(std::to_string(timeDirection) + "s"),
+                                    "Speed", PointerValue(speedVar),
+                                    "Bounds", RectangleValue(Rectangle(0, maxXAxis, 0, maxYAxis)));
+        uemobility.SetPositionAllocator(uePositionAlloc);
+
+        uint32_t uesInThisGroup = nodeGroupSize + (bsCoordIndex < nodeGroupSizeRest ? 1 : 0);
+        NodeContainer currentUeGroup;
+        for(uint32_t i=0; i < uesInThisGroup && ueIndexCounter < nUeNodes; ++i)
+        {
+          currentUeGroup.Add(ueNodes.Get(ueIndexCounter++));
+        }
+        if (currentUeGroup.GetN() > 0)
+        {
+          uemobility.Install(currentUeGroup);
+          NS_LOG_INFO("Instalado " << currentUeGroup.GetN() << " UEs em torno da BS na posição " << bsCoords[bsCoordIndex]);
+        }
+      }
+      if (ueIndexCounter != nUeNodes) {
+        NS_LOG_WARN("Nem todos os UEs foram alocados em positionAllocator=1. UEs alocados: " << ueIndexCounter << ", Total UEs: " << nUeNodes);
+      }
       break;
     }
     default:
@@ -421,14 +536,16 @@ main (int argc, char *argv[])
       break;
   }
 
-
+  // Instala NetDevices LTE, mmWave e MC (Multi-Connectivity)
   NetDeviceContainer lteEnbDevs = mmwaveHelper->InstallLteEnbDevice (lteEnbNodes);
   NetDeviceContainer mmWaveEnbDevs = mmwaveHelper->InstallEnbDevice (mmWaveEnbNodes);
   NetDeviceContainer mcUeDevs = mmwaveHelper->InstallMcUeDevice (ueNodes);
 
+  // Instala stack IP nas UEs e atribui endereços
   internet.Install (ueNodes);
   Ipv4InterfaceContainer ueIpIface = epcHelper->AssignUeIpv4Address (NetDeviceContainer (mcUeDevs));
 
+  // Configura rotas default para as UEs
   for (uint32_t u = 0; u < ueNodes.GetN (); ++u)
   {
     Ptr<Node> ueNode = ueNodes.Get (u);
@@ -436,56 +553,220 @@ main (int argc, char *argv[])
     ueStaticRouting->SetDefaultRoute (epcHelper->GetUeDefaultGatewayAddress (), 1);
   }
 
+  // Adiciona interface X2 entre eNBs/gNBs
   mmwaveHelper->AddX2Interface (lteEnbNodes, mmWaveEnbNodes);
+
+  // Associa UEs à eNB/gNB mais próxima inicialmente
   mmwaveHelper->AttachToClosestEnb (mcUeDevs, mmWaveEnbDevs, lteEnbDevs);
 
-  // --- Setup das Aplicações (tráfego) ---
-  // A lógica de tráfego é idêntica em ambos os cenários e foi omitida por brevidade.
-  // Cole o bloco de "Install and start applications" até "clientApp.Stop" aqui.
+  // --- Setup das Aplicações (tráfego - lógica do scenario-three) ---
+  uint16_t portTcp = 50000;
+  Address sinkLocalAddressTcp (InetSocketAddress (Ipv4Address::GetAny (), portTcp));
+  PacketSinkHelper sinkHelperTcp ("ns3::TcpSocketFactory", sinkLocalAddressTcp);
+  AddressValue serverAddressTcp (InetSocketAddress (remoteHostAddr, portTcp));
+
   uint16_t portUdp = 60000;
-  PacketSinkHelper sinkHelperUdp ("ns3::UdpSocketFactory", InetSocketAddress (Ipv4Address::GetAny (), portUdp));
-  ApplicationContainer sinkApp = sinkHelperUdp.Install (remoteHost);
+  Address sinkLocalAddressUdp (InetSocketAddress (Ipv4Address::GetAny (), portUdp));
+  PacketSinkHelper sinkHelperUdp ("ns3::UdpSocketFactory", sinkLocalAddressUdp);
+  AddressValue serverAddressUdp (InetSocketAddress (remoteHostAddr, portUdp));
+
+  ApplicationContainer sinkApp;
+  sinkApp.Add (sinkHelperTcp.Install (remoteHost)); // Sink TCP no host remoto
+  sinkApp.Add (sinkHelperUdp.Install (remoteHost)); // Sink UDP no host remoto
+
+  // Cria helpers para clientes OnOff
+  OnOffHelper clientHelperTcp ("ns3::TcpSocketFactory", Address ());
+  clientHelperTcp.SetAttribute ("Remote", serverAddressTcp);
+  clientHelperTcp.SetAttribute ("OnTime", StringValue ("ns3::ExponentialRandomVariable[Mean=1.0]")); // Média 1s ON
+  clientHelperTcp.SetAttribute ("OffTime", StringValue ("ns3::ExponentialRandomVariable[Mean=1.0]")); // Média 1s OFF
+  clientHelperTcp.SetAttribute ("DataRate", StringValue (dataRate)); // Usa dataRate configurado
+  clientHelperTcp.SetAttribute ("PacketSize", UintegerValue (1280));
+
+  OnOffHelper clientHelperTcp150 ("ns3::TcpSocketFactory", Address ());
+  clientHelperTcp150.SetAttribute ("Remote", serverAddressTcp);
+  clientHelperTcp150.SetAttribute ("OnTime", StringValue ("ns3::ExponentialRandomVariable[Mean=1.0]"));
+  clientHelperTcp150.SetAttribute ("OffTime", StringValue ("ns3::ExponentialRandomVariable[Mean=1.0]"));
+  clientHelperTcp150.SetAttribute ("DataRate", StringValue ("150kbps")); // Baixa taxa
+  clientHelperTcp150.SetAttribute ("PacketSize", UintegerValue (1280));
+
+  OnOffHelper clientHelperTcp750 ("ns3::TcpSocketFactory", Address ());
+  clientHelperTcp750.SetAttribute ("Remote", serverAddressTcp);
+  clientHelperTcp750.SetAttribute ("OnTime", StringValue ("ns3::ExponentialRandomVariable[Mean=1.0]"));
+  clientHelperTcp750.SetAttribute ("OffTime", StringValue ("ns3::ExponentialRandomVariable[Mean=1.0]"));
+  clientHelperTcp750.SetAttribute ("DataRate", StringValue ("750kbps")); // Taxa média
+  clientHelperTcp750.SetAttribute ("PacketSize", UintegerValue (1280));
+
+  OnOffHelper clientHelperUdp ("ns3::UdpSocketFactory", Address ());
+  clientHelperUdp.SetAttribute ("Remote", serverAddressUdp);
+  clientHelperUdp.SetAttribute ("OnTime", StringValue ("ns3::ExponentialRandomVariable[Mean=1.0]"));
+  clientHelperUdp.SetAttribute ("OffTime", StringValue ("ns3::ExponentialRandomVariable[Mean=1.0]"));
+  clientHelperUdp.SetAttribute ("DataRate", StringValue (dataRate));
+  clientHelperUdp.SetAttribute ("PacketSize", UintegerValue (1280));
+
   ApplicationContainer clientApp;
-  for (uint32_t u = 0; u < ueNodes.GetN (); ++u)
+  switch (trafficModel)
   {
-    PacketSinkHelper dlPacketSinkHelper ("ns3::UdpSocketFactory", InetSocketAddress (Ipv4Address::GetAny (), 1234));
-    sinkApp.Add (dlPacketSinkHelper.Install (ueNodes.Get (u)));
-    UdpClientHelper dlClient (ueIpIface.GetAddress (u), 1234);
-    dlClient.SetAttribute ("Interval", TimeValue (MicroSeconds (500)));
-    dlClient.SetAttribute ("MaxPackets", UintegerValue (UINT32_MAX));
-    dlClient.SetAttribute ("PacketSize", UintegerValue (1280));
-    clientApp.Add (dlClient.Install (remoteHost));
+    case 0: { // Full Buffer (constante UDP)
+      for (uint32_t u = 0; u < ueNodes.GetN (); ++u)
+      {
+        PacketSinkHelper dlPacketSinkHelper ("ns3::UdpSocketFactory", InetSocketAddress (Ipv4Address::GetAny (), 1234));
+        sinkApp.Add (dlPacketSinkHelper.Install (ueNodes.Get (u))); // Sink na UE
+        UdpClientHelper dlClient (ueIpIface.GetAddress (u), 1234); // Cliente no Host Remoto
+        dlClient.SetAttribute ("MaxPackets", UintegerValue (UINT32_MAX));
+        dlClient.SetAttribute ("PacketSize", UintegerValue (1280));
+        // Calcula intervalo para dataRate desejado (aproximado)
+        DataRate targetRate(dataRate);
+        Time pktInterval = Seconds(1280.0 * 8.0 / targetRate.GetBitRate());
+        dlClient.SetAttribute ("Interval", TimeValue (pktInterval));
+        clientApp.Add (dlClient.Install (remoteHost));
+      }
+    }
+    break;
+
+    case 1: { // Metade Full Buffer, Metade Bursty (OnOff)
+      for (uint32_t u = 0; u < ueNodes.GetN (); ++u)
+      {
+        if (u % 2 == 0) // Bursty
+        {
+          PacketSinkHelper dlPacketSinkHelper ("ns3::UdpSocketFactory", InetSocketAddress (Ipv4Address::GetAny (), 1234));
+          sinkApp.Add (dlPacketSinkHelper.Install (ueNodes.Get (u))); // Sink na UE
+          clientApp.Add (clientHelperUdp.Install (ueNodes.Get(u))); // Cliente OnOff UDP na UE
+        }
+        else // Full Buffer
+        {
+          PacketSinkHelper dlPacketSinkHelper ("ns3::UdpSocketFactory", InetSocketAddress (Ipv4Address::GetAny (), 1234));
+          sinkApp.Add (dlPacketSinkHelper.Install (ueNodes.Get (u))); // Sink na UE
+          UdpClientHelper dlClient (ueIpIface.GetAddress (u), 1234); // Cliente no Host Remoto
+          dlClient.SetAttribute ("MaxPackets", UintegerValue (UINT32_MAX));
+          dlClient.SetAttribute ("PacketSize", UintegerValue (1280));
+          DataRate targetRate(dataRate);
+          Time pktInterval = Seconds(1280.0 * 8.0 / targetRate.GetBitRate());
+          dlClient.SetAttribute ("Interval", TimeValue (pktInterval));
+          clientApp.Add (dlClient.Install (remoteHost));
+        }
+      }
+    }
+    break;
+
+    case 2: { // Tudo Bursty (OnOff)
+      for (uint32_t u = 0; u < ueNodes.GetN (); ++u)
+      {
+        // Instala Sink TCP e UDP na UE
+        PacketSinkHelper dlPacketSinkTcp ("ns3::TcpSocketFactory", InetSocketAddress (Ipv4Address::GetAny (), 1235));
+        PacketSinkHelper dlPacketSinkUdp ("ns3::UdpSocketFactory", InetSocketAddress (Ipv4Address::GetAny (), 1234));
+        sinkApp.Add(dlPacketSinkTcp.Install(ueNodes.Get(u)));
+        sinkApp.Add(dlPacketSinkUdp.Install(ueNodes.Get(u)));
+
+        // Alterna entre Cliente TCP e UDP na UE
+        if (u % 2 == 0)
+        {
+          // Configura cliente TCP para enviar para o sink TCP na UE
+          clientHelperTcp.SetAttribute("Remote", AddressValue(InetSocketAddress(ueIpIface.GetAddress(u), 1235)));
+          clientApp.Add (clientHelperTcp.Install (ueNodes.Get (u)));
+        }
+        else
+        {
+          // Configura cliente UDP para enviar para o sink UDP na UE
+          clientHelperUdp.SetAttribute("Remote", AddressValue(InetSocketAddress(ueIpIface.GetAddress(u), 1234)));
+          clientApp.Add (clientHelperUdp.Install (ueNodes.Get (u)));
+        }
+      }
+    }
+    break;
+
+    case 3: { // Mistura: 25% Full Buffer, 25% Bursty Alto, 25% Bursty Médio, 25% Bursty Baixo
+      for (uint32_t u = 0; u < ueNodes.GetN (); ++u)
+      {
+        // Instala Sinks na UE
+        PacketSinkHelper dlPacketSinkUdp ("ns3::UdpSocketFactory", InetSocketAddress (Ipv4Address::GetAny (), 1234));
+        sinkApp.Add (dlPacketSinkUdp.Install (ueNodes.Get (u))); // Sink UDP para Full Buffer
+        PacketSinkHelper dlPacketSinkTcp ("ns3::TcpSocketFactory", InetSocketAddress (Ipv4Address::GetAny (), 1235));
+        sinkApp.Add(dlPacketSinkTcp.Install(ueNodes.Get(u))); // Sink TCP para Bursty
+
+        if (u % 4 == 0) // Full Buffer
+        {
+          UdpClientHelper dlClient (ueIpIface.GetAddress (u), 1234); // Cliente no Host Remoto
+          dlClient.SetAttribute ("MaxPackets", UintegerValue (UINT32_MAX));
+          dlClient.SetAttribute ("PacketSize", UintegerValue (1280));
+          // Define data rate com base na configuração
+          DataRate targetRate;
+          if (configuration == 2) targetRate = DataRate("40Mbps"); // Taxa maior para mmWave
+          else targetRate = DataRate("20Mbps"); // Taxa menor para sub-6GHz
+          Time pktInterval = Seconds(1280.0 * 8.0 / targetRate.GetBitRate());
+          dlClient.SetAttribute ("Interval", TimeValue (pktInterval));
+          clientApp.Add (dlClient.Install (remoteHost));
+        }
+        else // Bursty TCP (Cliente na UE enviando para Sink TCP na UE)
+        {
+          AddressValue ueSinkAddr(InetSocketAddress(ueIpIface.GetAddress(u), 1235));
+          if (u % 4 == 1) // Bursty Alto (usa dataRate principal)
+          {
+            OnOffHelper client = clientHelperTcp; // Cria cópia
+            client.SetAttribute("Remote", ueSinkAddr);
+            clientApp.Add (client.Install (ueNodes.Get (u)));
+          }
+          else if (u % 4 == 2) // Bursty Médio (750kbps)
+          {
+            OnOffHelper client = clientHelperTcp750; // Cria cópia
+            client.SetAttribute("Remote", ueSinkAddr);
+            clientApp.Add (client.Install (ueNodes.Get (u)));
+          }
+          else if (u % 4 == 3) // Bursty Baixo (150kbps)
+          {
+            OnOffHelper client = clientHelperTcp150; // Cria cópia
+            client.SetAttribute("Remote", ueSinkAddr);
+            clientApp.Add (client.Install (ueNodes.Get (u)));
+          }
+        }
+      }
+      break;
+    }
+
+    default:
+      NS_FATAL_ERROR ( "Modelo de tráfego inválido: " << trafficModel);
   }
 
 
   // --- Início e Fim da Simulação ---
   GlobalValue::GetValueByName ("simTime", doubleValue);
   double simTime = doubleValue.Get ();
-  sinkApp.Start (Seconds (0));
-  clientApp.Start (MilliSeconds (100));
-  clientApp.Stop (Seconds (simTime - 0.1));
+  sinkApp.Start (Seconds (0.1)); // Pequeno atraso para garantir que os sinks estão prontos
+  clientApp.Start (Seconds (0.2)); // Pequeno atraso para iniciar clientes
+  clientApp.Stop (Seconds (simTime - 0.1)); // Para um pouco antes do fim
 
+  // Ativa traces se necessário
   if (enableTraces)
   {
     mmwaveHelper->EnableTraces ();
   }
 
+  // Ativa traces LTE PHY/MAC
   Ptr<LteHelper> lteHelper = CreateObject<LteHelper> ();
   lteHelper->Initialize ();
   lteHelper->EnablePhyTraces ();
   lteHelper->EnableMacTraces ();
 
+  // Imprime posições iniciais para gnuplot
   PrintGnuplottableUeListToFile ("ues.txt");
   PrintGnuplottableEnbListToFile ("enbs.txt");
 
-  // --- Agendamento do Log de Estado da BS (do scenario-three) ---
+  // --- Agendamento do Log de Estado da BS (BsStateTrace) ---
+  // Obtém o NetDevice e RRC do eNB LTE (assumindo que só há um)
   Ptr<LteEnbNetDevice> ltedev = DynamicCast<LteEnbNetDevice> (lteEnbDevs.Get (0));
+  if (!ltedev) {
+    NS_FATAL_ERROR("Não foi possível encontrar o LteEnbNetDevice.");
+  }
   Ptr<LteEnbRrc> lte_rrc = ltedev->GetRrc ();
+  if (!lte_rrc) {
+    NS_FATAL_ERROR("Não foi possível obter o LteEnbRrc.");
+  }
+  // Agenda a escrita do estado a cada `indicationPeriodicity`
   for (double i = 0.0; i < simTime; i = i + indicationPeriodicity){
-    Simulator::Schedule (Seconds (i), BsStateTrace,"bsState.txt", ltedev, lte_rrc);
+    Simulator::Schedule (Seconds (i), &BsStateTrace, "bsState.txt", ltedev, lte_rrc);
   }
 
-  NS_LOG_UNCOND ("Hierarchical Simulation Starting. Time: " << simTime << " seconds. Control File: " << controlFilename);
+  // Mensagem de início e execução da simulação
+  NS_LOG_UNCOND ("Hierarchical Simulation Starting. Time: " << simTime << " seconds. Control File: '" << controlFilename << "' Use Semaphores: " << useSemaphores);
   Simulator::Stop (Seconds (simTime));
   Simulator::Run ();
   Simulator::Destroy ();
