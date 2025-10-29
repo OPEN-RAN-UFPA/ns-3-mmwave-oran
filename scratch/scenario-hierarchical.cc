@@ -157,7 +157,7 @@ static ns3::GlobalValue g_indicationPeriodicity ("indicationPeriodicity", "E2 In
 static ns3::GlobalValue g_configuration ("configuration", "Set the wanted configuration to emulate [0,2]", ns3::UintegerValue (0), ns3::MakeUintegerChecker<uint8_t> ()); // Ajustado para corresponder ao seu log
 static ns3::GlobalValue g_trafficModel ("trafficModel", "Type of the traffic model [0,3]", ns3::UintegerValue (3), ns3::MakeUintegerChecker<uint8_t> ()); // Ajustado para corresponder ao seu log
 static ns3::GlobalValue q_useSemaphores ("useSemaphores", "If true, enables the use of semaphores for external environment control", ns3::BooleanValue (false), ns3::MakeBooleanChecker ()); // Ajustado para corresponder ao seu log de erro
-static ns3::GlobalValue g_controlFileName ("controlFileName", "The path to the control file for hierarchical actions", ns3::StringValue ("hierarchical_actions.csv"), ns3::MakeStringChecker ()); // Definido para o esperado
+static ns3::GlobalValue g_controlFileName ("controlFileName", "The path to the control file for hierarchical actions", ns3::StringValue (""), ns3::MakeStringChecker ()); // Definido para o esperado
 //hierarchical_actions.csv
 // Parâmetros de Handover (do scenario-one)
 static ns3::GlobalValue g_hoSinrDifference ("hoSinrDifference", "The SINR value difference for which a handover is triggered", ns3::DoubleValue (3), ns3::MakeDoubleChecker<double> ());
@@ -761,9 +761,13 @@ main (int argc, char *argv[])
     NS_FATAL_ERROR("Não foi possível obter o LteEnbRrc.");
   }
   // Agenda a escrita do estado a cada `indicationPeriodicity`
-  for (double i = 0.0; i < simTime; i = i + indicationPeriodicity){
-    Simulator::Schedule (Seconds (i), &BsStateTrace, "bsState.txt", ltedev, lte_rrc);
-  }
+  int numSteps = static_cast<int>(std::ceil(simTime / indicationPeriodicity));
+  for (int step = 0; step <= numSteps; ++step) {
+    double time = step * indicationPeriodicity;
+    if (time <= simTime + 0.0001) {
+        Simulator::Schedule(Seconds(time), BsStateTrace, "bsState.txt", ltedev, lte_rrc);
+    }
+}
 
   // Mensagem de início e execução da simulação
   NS_LOG_UNCOND ("Hierarchical Simulation Starting. Time: " << simTime << " seconds. Control File: '" << controlFilename << "' Use Semaphores: " << useSemaphores);

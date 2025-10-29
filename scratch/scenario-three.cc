@@ -966,7 +966,7 @@ main (int argc, char *argv[])
   sinkApp.Start (Seconds (0));
 
   clientApp.Start (MilliSeconds (100));
-  clientApp.Stop (Seconds (simTime - 0.1));
+  clientApp.Stop (Seconds (simTime));
 
   int BsStatus[4] = {bsOn, bsIdle, bsSleep, bsOff};
 
@@ -991,7 +991,7 @@ main (int argc, char *argv[])
 
       // Random sleeping
       case 0: {
-        for (double i = 0.0; i < simTime; i = i + indicationPeriodicity)
+        for (double i = 0.0; i <= simTime; i = i + indicationPeriodicity)
           {
             for (int j = 0; j < nMmWaveEnbNodes; j++)
               {
@@ -1007,7 +1007,7 @@ main (int argc, char *argv[])
 
       // Static sleeping
       case 1: {
-        for (double i = 0.0; i < simTime; i = i + indicationPeriodicity)
+        for (double i = 0.0; i <= simTime; i = i + indicationPeriodicity)
           {
             //If bsOn==0 skip it: we don't need to count the SINR of connected UEs
             for (int j = 0; j < nMmWaveEnbNodes && bsOn!=0; j++)
@@ -1027,7 +1027,7 @@ main (int argc, char *argv[])
       // Dynamic sleeping
       case 2: {
 
-        for (double i = 0.0; i < simTime; i = i + indicationPeriodicity)
+        for (double i = 0.0; i <= simTime; i = i + indicationPeriodicity)
           {
             //If bsOn==0 skip it: we don't need to count the SINR of connected UEs
             for (int j = 0; j < nMmWaveEnbNodes && bsOn!=0; j++)
@@ -1067,9 +1067,13 @@ main (int argc, char *argv[])
   PrintGnuplottableEnbListToFile ("enbs.txt");
   Ptr<LteEnbNetDevice> ltedev = DynamicCast<LteEnbNetDevice> (lteEnbDevs.Get (0));
   Ptr<LteEnbRrc> lte_rrc = ltedev->GetRrc ();  
-  for (double i = 0.0; i < simTime; i = i + indicationPeriodicity){
-    Simulator::Schedule (Seconds (i), BsStateTrace,"bsState.txt", ltedev, lte_rrc);
-  }
+  int numSteps = static_cast<int>(std::ceil(simTime / indicationPeriodicity));
+  for (int step = 0; step <= numSteps; ++step) {
+    double time = step * indicationPeriodicity;
+    if (time <= simTime + 0.0001) {
+        Simulator::Schedule(Seconds(time), BsStateTrace, "bsState.txt", ltedev, lte_rrc);
+    }
+}
 
   bool run = true;
   if (run)
