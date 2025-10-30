@@ -151,7 +151,7 @@ PrintGnuplottableEnbListToFile (std::string filename)
 // --- Parâmetros Globais (mesclados de ambos os cenários) ---
 
 // Parâmetros Comuns
-static ns3::GlobalValue g_simTime ("simTime", "Simulation time in seconds", ns3::DoubleValue (1.9), ns3::MakeDoubleChecker<double> (0.1, 1000.0));
+static ns3::GlobalValue g_simTime ("simTime", "Simulation time in seconds", ns3::DoubleValue (10.0), ns3::MakeDoubleChecker<double> (0.1, 1000.0));
 static ns3::GlobalValue g_ues ("ues", "Number of UEs for each mmWave ENB.", ns3::UintegerValue (3), ns3::MakeUintegerChecker<uint8_t> ()); // Ajustado para corresponder ao seu log
 static ns3::GlobalValue g_indicationPeriodicity ("indicationPeriodicity", "E2 Indication Periodicity reports (value in seconds)", ns3::DoubleValue (0.1), ns3::MakeDoubleChecker<double> (0.01, 2.0));
 static ns3::GlobalValue g_configuration ("configuration", "Set the wanted configuration to emulate [0,2]", ns3::UintegerValue (0), ns3::MakeUintegerChecker<uint8_t> ()); // Ajustado para corresponder ao seu log

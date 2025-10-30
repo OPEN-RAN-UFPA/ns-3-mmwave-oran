@@ -124,411 +124,539 @@ namespace ns3
         return path;
     }
 
-    void
-    LteEnbNetDevice::ReadControlFile()
+   void
+LteEnbNetDevice::ReadControlFile()
+{
+    NS_LOG_INFO(Simulator::Now().GetMilliSeconds()
+                << " I will try to read the control file " << m_controlFilename);
+    // Open the control file and read control commands
+    if (m_controlFilename != "")
     {
-        NS_LOG_INFO(Simulator::Now().GetMilliSeconds()
-        << " I will try to read the control file " << m_controlFilename);
-        // Open the control file and read control commands
-        if (m_controlFilename != "")
+        if (m_useSemaphores)
         {
-            if (m_useSemaphores)
+            sem_t* metricsReadySemaphore = sem_open(m_metricsReadySemaphoreName.c_str(), 0);
+            NS_ABORT_MSG_IF(metricsReadySemaphore == SEM_FAILED,
+                            "Error in opening the metrics semaphore, errno: " << strerror(errno));
+
+
+            // ================== INÍCIO DA CORREÇÃO (Item 1.1) ==================
+            // Movemos a lógica de 'BsStateTrace' (do scenario-hierarchical.cc) para cá.
+            // Isso garante que o 'bsState.txt' seja escrito ANTES de liberar o semáforo.
+            { // Bloco para limitar o escopo do outFile
+                std::string filename = "bsState.txt"; // Mesmo nome hardcoded do scenario
+                std::ofstream outFile;
+
+                // --- Lógica para escrever o cabeçalho se necessário ---
+                bool needsHeader = false;
+                std::ifstream fileChecker(filename);
+                if (!fileChecker.good()) // Arquivo não existe
+                {
+                    needsHeader = true;
+                }
+                else
+                {
+                    // Arquivo existe, verifica se está vazio
+                    if (fileChecker.peek() == std::ifstream::traits_type::eof())
+                    {
+                        needsHeader = true;
+                    }
+                }
+                fileChecker.close();
+                // --- Fim da lógica do cabeçalho ---
+
+                // Abre em modo 'append' (adicionar ao final)
+                outFile.open(filename.c_str(), std::ios_base::out | std::ios_base::app);
+                if (!outFile.is_open())
+                {
+                    NS_LOG_ERROR("Não foi possível abrir " << filename << " para logar o estado da BS!");
+                }
+                else
+                {
+                    if (needsHeader)
+                    {
+                        outFile << "Timestamp"
+                                << " "
+                                << "UNIX"
+                                << " "
+                                << "Id"
+                                << " "
+                                << "State" << std::endl;
+                    }
+
+                    // Acessa m_rrc (que esta classe já possui)
+                    std::map<uint16_t, bool> entry = m_rrc->GetAllowHandoverTo();
+                    for (auto it = entry.begin(); it != entry.end(); it++)
+                    {
+                        // Usa 'this' (ponteiro para LteEnbNetDevice) em vez de 'ltedev'
+                        uint64_t unix_timestamp_ms = this->GetStartTime() +
+                                                     Simulator::Now().GetMilliSeconds();
+                        outFile << Simulator::Now().GetSeconds() << " " << unix_timestamp_ms << " "
+                                << it->first << " " << it->second << std::endl;
+                    }
+                    outFile.close();
+                }
+            }
+            // =================== FIM DA CORREÇÃO ===================
+
+
+            // Agora, sinaliza que as métricas (incluindo o bsState.txt) estão prontas
+            if (sem_post(metricsReadySemaphore) == -1)
             {
-                sem_t* metricsReadySemaphore = sem_open(m_metricsReadySemaphoreName.c_str(), 0);
-                NS_ABORT_MSG_IF(metricsReadySemaphore == SEM_FAILED,
-                                "Error in opening the metrics semaphore, errno: " << strerror(errno));
-
-                // Signal that metrics are ready
-                if (sem_post(metricsReadySemaphore) == -1)
-                {
-                    NS_FATAL_ERROR("Error post named metrics semaphore: " << strerror(errno));
-                }
-
-                sem_close(metricsReadySemaphore);
-                metricsReadySemaphore = nullptr;
-
-                sem_t* controlSemaphore = sem_open(m_controlSemaphoreName.c_str(), 0);
-                NS_ABORT_MSG_IF(controlSemaphore == SEM_FAILED,
-                                "Error in opening the control semaphore, errno: " << strerror(errno));
-
-                if (sem_wait(controlSemaphore) == -1)
-                {
-                    NS_FATAL_ERROR("Error wait control control semaphore: " << strerror(errno));
-                }
-
-                sem_close(controlSemaphore);
-                controlSemaphore = nullptr;
+                NS_FATAL_ERROR("Error post named metrics semaphore: " << strerror(errno));
             }
 
-            // open the control file and read handover commands
-            if (m_controlFilename != "")
+            sem_close(metricsReadySemaphore);
+            metricsReadySemaphore = nullptr;
+
+            sem_t* controlSemaphore = sem_open(m_controlSemaphoreName.c_str(), 0);
+            NS_ABORT_MSG_IF(controlSemaphore == SEM_FAILED,
+                            "Error in opening the control semaphore, errno: " << strerror(errno));
+
+            if (sem_wait(controlSemaphore) == -1)
             {
-                std::ifstream csv{};
-                csv.open(m_controlFilename.c_str(), std::ifstream::in);
-                if (!csv.is_open())
+                NS_FATAL_ERROR("Error wait control control semaphore: " << strerror(errno));
+            }
+
+            sem_close(controlSemaphore);
+            controlSemaphore = nullptr;
+        }
+
+        // open the control file and read handover commands
+        if (m_controlFilename != "")
+        {
+            std::ifstream csv{};
+            csv.open(m_controlFilename.c_str(), std::ifstream::in);
+            if (!csv.is_open())
+            {
+                NS_FATAL_ERROR("Can't open file " << m_controlFilename.c_str());
+            }
+            std::string line;
+
+            if (m_controlFilename.find("ts_actions_for_ns3.csv") != std::string::npos)
+            { // TODO adapt to the scheduling of the messages
+
+                long long timestamp{};
+
+                while (std::getline(csv, line))
                 {
-                    NS_FATAL_ERROR("Can't open file " << m_controlFilename.c_str());
-                }
-                std::string line;
-
-                if (m_controlFilename.find("ts_actions_for_ns3.csv") != std::string::npos)
-                { // TODO adapt to the scheduling of the messages
-
-                    long long timestamp{};
-
-                    while (std::getline(csv, line))
+                    if (line == "")
                     {
-                        if (line == "")
+                        // skip empty lines
+                        continue;
+                    }
+                    NS_LOG_INFO("Read handover command");
+                    std::stringstream lineStream(line);
+                    std::string cell;
+
+                    std::getline(lineStream, cell, ',');
+                    timestamp = std::stoll(cell);
+
+                    uint64_t imsi;
+                    std::getline(lineStream, cell, ',');
+                    imsi = std::stoi(cell);
+
+                    uint16_t targetCellId;
+                    std::getline(lineStream, cell, ',');
+                    // uncomment the next line if need to remove PLM ID, first 3 digits always 111
+                    // cell.erase(0, 3);
+                    targetCellId = std::stoi(cell);
+
+                    NS_LOG_INFO("Handover command for timestamp " << timestamp << " imsi " << imsi
+                                                                << " targetCellId "
+                                                                << targetCellId);
+
+                    uint16_t rntiUe = m_rrc->GetRntiFromImsi(imsi);
+                    uint16_t sourceCellId = m_rrc->GetUeManager(rntiUe)->GetMmWaveCellId();
+                    if (sourceCellId == targetCellId)
+                    {
+                        NS_LOG_WARN("Source CellId and Target CellId are the same "
+                                    << unsigned(sourceCellId) << ", ignoring HO request");
+                        continue;
+                    }
+
+                    m_rrc->TakeUeHoControl(imsi);
+                    Simulator::ScheduleWithContext(1,
+                                                   Seconds(0),
+                                                   &LteEnbRrc::PerformHandoverToTargetCell,
+                                                   m_rrc,
+                                                   imsi,
+                                                   targetCellId);
+                }
+            }
+            else if (m_controlFilename.find("es_actions_for_ns3.csv") != std::string::npos)
+            {
+                long long timestamp{};
+                uint8_t counter = 0;
+                while (std::getline(csv, line))
+                {
+                    if (line == "")
+                    {
+                        // skip empty lines
+                        continue;
+                    }
+                    NS_LOG_INFO("Read evict users command");
+                    counter++;
+                    std::stringstream lineStream(line);
+                    std::string cell;
+
+                    std::getline(lineStream, cell, ',');
+                    timestamp = std::stoll(cell);
+
+                    uint16_t cellId;
+                    std::getline(lineStream, cell, ',');
+                    // uncomment the next line if need to remove PLM ID, first 3 digits always 111
+                    // cell.erase(0, 3);
+                    cellId = std::stoi(cell);
+
+                    bool hoAllowed; // TODO enforce correctness by checking what value is written in
+                                    // the file (should be 0 for false and 1 for true now)
+                    std::getline(lineStream, cell, ',');
+                    hoAllowed = std::stoi(cell);
+
+                    NS_LOG_INFO("Set allowed command with timestamp "
+                                << timestamp << " cellId " << cellId << " hoAllowed " << hoAllowed);
+
+                    // set the status of the cell (On/Off)
+                    if (!m_scheduleControlMessages)
+                    {
+                        m_rrc->SetSecondaryCellHandoverAllowedStatus(cellId, hoAllowed);
+                    }
+                    else
+                    { // Here we pre-schedule all the functions to be executed during the simulation
+                        Simulator::Schedule(MilliSeconds(timestamp),
+                                            &LteEnbRrc::SetSecondaryCellHandoverAllowedStatus,
+                                            m_rrc,
+                                            cellId,
+                                            hoAllowed);
+                    }
+                }
+
+                if (counter > 0)
+                { // we want this to be triggered only when we have some new data to process
+                    // Triggers (or schedules) the handovers for UEs in the Off cells
+                    if (!m_scheduleControlMessages)
+                    {
+                        m_rrc->EvictUsersFromSecondaryCell();
+                    }
+                    else
+                    {
+                        // we introduce a minimum offset of 0.001 to make sure that this is
+                        // scheduled after. This may be unnecessary according to the internal
+                        // working of ns-3 But ¯\_(ツ)_/¯
+                        Simulator::Schedule(MilliSeconds(timestamp + 0.001),
+                                            &LteEnbRrc::EvictUsersFromSecondaryCell,
+                                            m_rrc);
+                    }
+                }
+            }
+            else if (m_controlFilename.find("hierarchical_actions.csv") != std::string::npos)
+            {
+                long long timestamp{};
+                uint8_t esCounter = 0;
+                long long lastEsTimestamp = 0;
+
+                while (std::getline(csv, line))
+                {
+                    if (line == "")
+                    {
+                        continue;
+                    }
+
+                    std::stringstream lineStream(line);
+                    std::string cell;
+
+                    // 1. LER O TIMESTAMP
+                    std::getline(lineStream, cell, ',');
+                    // Adiciona try-catch para robustez na conversão
+                    try
+                    {
+                        timestamp = std::stoll(cell);
+                    }
+                    catch (const std::invalid_argument& ia)
+                    {
+                        NS_LOG_WARN("Erro ao converter timestamp: " << cell << " Linha: " << line);
+                        continue; // Pula esta linha
+                    }
+                    catch (const std::out_of_range& oor)
+                    {
+                        NS_LOG_WARN("Timestamp fora do range: " << cell << " Linha: " << line);
+                        continue; // Pula esta linha
+                    }
+
+                    // 2. LER O TIPO DE AÇÃO (COMO INTEIRO)
+                    uint8_t action_type; // Mudado para uint8_t
+                    std::getline(lineStream, cell, ',');
+                    try
+                    {
+                        action_type = std::stoi(cell); // Usa stoi para converter para int
+                    }
+                    catch (const std::invalid_argument& ia)
+                    {
+                        NS_LOG_WARN("Erro ao converter action_type: " << cell << " Linha: " << line);
+                        continue; // Pula esta linha
+                    }
+                    catch (const std::out_of_range& oor)
+                    {
+                        NS_LOG_WARN("action_type fora do range: " << cell << " Linha: " << line);
+                        continue; // Pula esta linha
+                    }
+
+                    if (action_type == 1) // 1 = TS (Traffic Steering)
+                    {
+                        // Formato esperado: imsi,targetCellId (após timestamp e action_type)
+                        uint64_t imsi;
+                        if (!std::getline(lineStream, cell, ','))
                         {
-                            // skip empty lines
+                            NS_LOG_WARN("Faltando IMSI na linha TS: " << line);
                             continue;
                         }
-                        NS_LOG_INFO("Read handover command");
-                        std::stringstream lineStream(line);
-                        std::string cell;
-
-                        std::getline(lineStream, cell, ',');
-                        timestamp = std::stoll(cell);
-
-                        uint64_t imsi;
-                        std::getline(lineStream, cell, ',');
-                        imsi = std::stoi(cell);
+                        try
+                        {
+                            imsi = std::stoull(cell); // Usa stoull para uint64_t
+                        }
+                        catch (const std::invalid_argument& ia)
+                        {
+                            NS_LOG_WARN("Erro ao converter IMSI: " << cell << " Linha: " << line);
+                            continue;
+                        }
+                        catch (const std::out_of_range& oor)
+                        {
+                            NS_LOG_WARN("IMSI fora do range: " << cell << " Linha: " << line);
+                            continue;
+                        }
 
                         uint16_t targetCellId;
-                        std::getline(lineStream, cell, ',');
-                        // uncomment the next line if need to remove PLM ID, first 3 digits always 111
-                        // cell.erase(0, 3);
-                        targetCellId = std::stoi(cell);
+                        if (!std::getline(lineStream, cell, ','))
+                        {
+                            NS_LOG_WARN("Faltando targetCellId na linha TS: " << line);
+                            continue;
+                        }
+                        try
+                        {
+                            targetCellId = std::stoi(cell);
+                        }
+                        catch (const std::invalid_argument& ia)
+                        {
+                            NS_LOG_WARN("Erro ao converter targetCellId: " << cell << " Linha: " << line);
+                            continue;
+                        }
+                        catch (const std::out_of_range& oor)
+                        {
+                            NS_LOG_WARN("targetCellId fora do range: " << cell << " Linha: " << line);
+                            continue;
+                        }
 
-                        NS_LOG_INFO("Handover command for timestamp " << timestamp << " imsi " << imsi
-                        << " targetCellId "
-                        << targetCellId);
+                        NS_LOG_INFO("Handover (hierarchical) ts " << timestamp
+                                                                 << " type " << unsigned(action_type) // Log do tipo numérico
+                                                                 << " imsi " << imsi
+                                                                 << " targetCellId " << targetCellId);
 
+                        // --- Lógica de Handover (igual à anterior) ---
                         uint16_t rntiUe = m_rrc->GetRntiFromImsi(imsi);
+                        // Adiciona verificação se a UE existe
+                        if (rntiUe == 0xFFFF)
+                        {
+                            NS_LOG_WARN("IMSI " << imsi << " não encontrado para HO no ts " << timestamp);
+                            continue;
+                        }
                         uint16_t sourceCellId = m_rrc->GetUeManager(rntiUe)->GetMmWaveCellId();
                         if (sourceCellId == targetCellId)
                         {
-                            NS_LOG_WARN("Source CellId and Target CellId are the same "
-                            << unsigned(sourceCellId) << ", ignoring HO request");
+                            NS_LOG_WARN("Source CellId " << unsigned(sourceCellId)
+                                                         << " e Target CellId " << unsigned(targetCellId)
+                                                         << " são iguais, ignorando HO para IMSI " << imsi);
                             continue;
                         }
 
                         m_rrc->TakeUeHoControl(imsi);
-                        Simulator::ScheduleWithContext(1,
-                                                       Seconds(0),
-                                                       &LteEnbRrc::PerformHandoverToTargetCell,
-                                                       m_rrc,
-                                                       imsi,
-                                                       targetCellId);
+                        Simulator::ScheduleWithContext(
+                            1,
+                            Seconds(0), // Executa imediatamente no contexto do nó 1
+                            &LteEnbRrc::PerformHandoverToTargetCell,
+                            m_rrc,
+                            imsi,
+                            targetCellId);
                     }
-                }
-                else if (m_controlFilename.find("es_actions_for_ns3.csv") != std::string::npos)
-                {
-                    long long timestamp{};
-                    uint8_t counter = 0;
-                    while (std::getline(csv, line))
+                    else if (action_type == 0) // 0 = ES (Energy Saving)
                     {
-                        if (line == "")
+                        // Formato esperado: cellId,hoAllowed (após timestamp e action_type)
+                        uint16_t cellId;
+                        if (!std::getline(lineStream, cell, ','))
                         {
-                            // skip empty lines
+                            NS_LOG_WARN("Faltando cellId na linha ES: " << line);
                             continue;
                         }
-                        NS_LOG_INFO("Read evict users command");
-                        counter++;
-                        std::stringstream lineStream(line);
-                        std::string cell;
+                        try
+                        {
+                            cellId = std::stoi(cell);
+                        }
+                        catch (const std::invalid_argument& ia)
+                        {
+                            NS_LOG_WARN("Erro ao converter cellId (ES): " << cell << " Linha: " << line);
+                            continue;
+                        }
+                        catch (const std::out_of_range& oor)
+                        {
+                            NS_LOG_WARN("cellId (ES) fora do range: " << cell << " Linha: " << line);
+                            continue;
+                        }
 
-                        std::getline(lineStream, cell, ',');
-                        timestamp = std::stoll(cell);
+                        bool hoAllowed;
+                        if (!std::getline(lineStream, cell, ','))
+                        {
+                            NS_LOG_WARN("Faltando hoAllowed na linha ES: " << line);
+                            continue;
+                        }
+                        try
+                        {
+                            hoAllowed = std::stoi(
+                                cell); // Converte para int, depois implicitamente para bool
+                        }
+                        catch (const std::invalid_argument& ia)
+                        {
+                            NS_LOG_WARN("Erro ao converter hoAllowed: " << cell << " Linha: " << line);
+                            continue;
+                        }
+                        catch (const std::out_of_range& oor)
+                        {
+                            NS_LOG_WARN("hoAllowed fora do range: " << cell << " Linha: " << line);
+                            continue;
+                        }
 
-                        uint16_t cellId;
-                        std::getline(lineStream, cell, ',');
-                        // uncomment the next line if need to remove PLM ID, first 3 digits always 111
-                        // cell.erase(0, 3);
-                        cellId = std::stoi(cell);
+                        NS_LOG_INFO("ES set allowed (hierarchical) ts " << timestamp
+                                                                       << " type " << unsigned(action_type) // Log do tipo numérico
+                                                                       << " cellId " << cellId
+                                                                       << " hoAllowed " << hoAllowed);
 
-                        bool hoAllowed; // TODO enforce correctness by checking what value is written in
-                        // the file (should be 0 for false and 1 for true now)
-                        std::getline(lineStream, cell, ',');
-                        hoAllowed = std::stoi(cell);
-
-                        NS_LOG_INFO("Set allowed command with timestamp "
-                        << timestamp << " cellId " << cellId << " hoAllowed " << hoAllowed);
-
-                        // set the status of the cell (On/Off)
+                        // --- Lógica de Estado da Célula (igual à anterior) ---
                         if (!m_scheduleControlMessages)
                         {
                             m_rrc->SetSecondaryCellHandoverAllowedStatus(cellId, hoAllowed);
                         }
                         else
-                        { // Here we pre-schedule all the functions to be executed during the simulation
+                        {
+                            // Usa o timestamp lido do ficheiro
                             Simulator::Schedule(MilliSeconds(timestamp),
                                                 &LteEnbRrc::SetSecondaryCellHandoverAllowedStatus,
                                                 m_rrc,
                                                 cellId,
                                                 hoAllowed);
                         }
-                    }
 
-                    if (counter > 0)
-                    { // we want this to be triggered only when we have some new data to process
-                        // Triggers (or schedules) the handovers for UEs in the Off cells
-                        if (!m_scheduleControlMessages)
-                        {
-                            m_rrc->EvictUsersFromSecondaryCell();
-                        }
-                        else
-                        {
-                            // we introduce a minimum offset of 0.001 to make sure that this is
-                            // scheduled after. This may be unnecessary according to the internal
-                            // working of ns-3 But ¯\_(ツ)_/¯
-                            Simulator::Schedule(MilliSeconds(timestamp + 0.001),
-                                                &LteEnbRrc::EvictUsersFromSecondaryCell,
-                                                m_rrc);
-                        }
+                        esCounter++;
+                        lastEsTimestamp = timestamp;
                     }
-                }
-                else if (m_controlFilename.find("hierarchical_actions.csv") != std::string::npos)
+                    else
+                    {
+                        NS_LOG_WARN("Unknown action_type in hierarchical_actions.csv: "
+                                    << unsigned(action_type)
+                                    << " (expected 0 or 1). Linha: " << line);
+                    }
+                } // Fim do while loop
+
+                // --- Lógica de Evacuação (igual à anterior) ---
+                if (esCounter > 0)
                 {
-                    long long timestamp{};
-                    uint8_t esCounter = 0;
-                    long long lastEsTimestamp = 0;
-
-                    while (std::getline(csv, line))
+                    if (!m_scheduleControlMessages)
                     {
-                        if (line == "")
-                        {
-                            continue;
-                        }
-
-                        std::stringstream lineStream(line);
-                        std::string cell;
-
-                        // 1. LER O TIMESTAMP
-                        std::getline(lineStream, cell, ',');
-                        // Adiciona try-catch para robustez na conversão
-                        try {
-                            timestamp = std::stoll(cell);
-                        } catch (const std::invalid_argument& ia) {
-                            NS_LOG_WARN("Erro ao converter timestamp: " << cell << " Linha: " << line);
-                            continue; // Pula esta linha
-                        } catch (const std::out_of_range& oor) {
-                            NS_LOG_WARN("Timestamp fora do range: " << cell << " Linha: " << line);
-                            continue; // Pula esta linha
-                        }
-
-
-                        // 2. LER O TIPO DE AÇÃO (COMO INTEIRO)
-                        uint8_t action_type; // Mudado para uint8_t
-                        std::getline(lineStream, cell, ',');
-                        try {
-                            action_type = std::stoi(cell); // Usa stoi para converter para int
-                        } catch (const std::invalid_argument& ia) {
-                            NS_LOG_WARN("Erro ao converter action_type: " << cell << " Linha: " << line);
-                            continue; // Pula esta linha
-                        } catch (const std::out_of_range& oor) {
-                            NS_LOG_WARN("action_type fora do range: " << cell << " Linha: " << line);
-                            continue; // Pula esta linha
-                        }
-
-
-                        if (action_type == 1) // 1 = TS (Traffic Steering)
-                        {
-                            // Formato esperado: imsi,targetCellId (após timestamp e action_type)
-                            uint64_t imsi;
-                            if (!std::getline(lineStream, cell, ',')) { NS_LOG_WARN("Faltando IMSI na linha TS: " << line); continue; }
-                            try {
-                                imsi = std::stoull(cell); // Usa stoull para uint64_t
-                            } catch (const std::invalid_argument& ia) { NS_LOG_WARN("Erro ao converter IMSI: " << cell << " Linha: " << line); continue; }
-                            catch (const std::out_of_range& oor) { NS_LOG_WARN("IMSI fora do range: " << cell << " Linha: " << line); continue; }
-
-
-                            uint16_t targetCellId;
-                            if (!std::getline(lineStream, cell, ',')) { NS_LOG_WARN("Faltando targetCellId na linha TS: " << line); continue; }
-                            try {
-                                targetCellId = std::stoi(cell);
-                            } catch (const std::invalid_argument& ia) { NS_LOG_WARN("Erro ao converter targetCellId: " << cell << " Linha: " << line); continue; }
-                            catch (const std::out_of_range& oor) { NS_LOG_WARN("targetCellId fora do range: " << cell << " Linha: " << line); continue; }
-
-
-                            NS_LOG_INFO("Handover (hierarchical) ts " << timestamp
-                            << " type " << unsigned(action_type) // Log do tipo numérico
-                            << " imsi " << imsi
-                            << " targetCellId " << targetCellId);
-
-                            // --- Lógica de Handover (igual à anterior) ---
-                            uint16_t rntiUe = m_rrc->GetRntiFromImsi(imsi);
-                            // Adiciona verificação se a UE existe
-                            if (rntiUe == 0xFFFF) {
-                                NS_LOG_WARN("IMSI " << imsi << " não encontrado para HO no ts " << timestamp);
-                                continue;
-                            }
-                            uint16_t sourceCellId = m_rrc->GetUeManager(rntiUe)->GetMmWaveCellId();
-                            if (sourceCellId == targetCellId)
-                            {
-                                NS_LOG_WARN("Source CellId " << unsigned(sourceCellId) << " e Target CellId " << unsigned(targetCellId)
-                                << " são iguais, ignorando HO para IMSI " << imsi);
-                                continue;
-                            }
-
-                            m_rrc->TakeUeHoControl(imsi);
-                            Simulator::ScheduleWithContext(1,
-                                                           Seconds(0), // Executa imediatamente no contexto do nó 1
-                                                           &LteEnbRrc::PerformHandoverToTargetCell,
-                                                           m_rrc,
-                                                           imsi,
-                                                           targetCellId);
-                        }
-                        else if (action_type == 0) // 0 = ES (Energy Saving)
-                        {
-                            // Formato esperado: cellId,hoAllowed (após timestamp e action_type)
-                            uint16_t cellId;
-                            if (!std::getline(lineStream, cell, ',')) { NS_LOG_WARN("Faltando cellId na linha ES: " << line); continue; }
-                            try {
-                                cellId = std::stoi(cell);
-                            } catch (const std::invalid_argument& ia) { NS_LOG_WARN("Erro ao converter cellId (ES): " << cell << " Linha: " << line); continue; }
-                            catch (const std::out_of_range& oor) { NS_LOG_WARN("cellId (ES) fora do range: " << cell << " Linha: " << line); continue; }
-
-
-                            bool hoAllowed;
-                            if (!std::getline(lineStream, cell, ',')) { NS_LOG_WARN("Faltando hoAllowed na linha ES: " << line); continue; }
-                            try {
-                                hoAllowed = std::stoi(cell); // Converte para int, depois implicitamente para bool
-                            } catch (const std::invalid_argument& ia) { NS_LOG_WARN("Erro ao converter hoAllowed: " << cell << " Linha: " << line); continue; }
-                            catch (const std::out_of_range& oor) { NS_LOG_WARN("hoAllowed fora do range: " << cell << " Linha: " << line); continue; }
-
-                            NS_LOG_INFO("ES set allowed (hierarchical) ts " << timestamp
-                            << " type " << unsigned(action_type) // Log do tipo numérico
-                            << " cellId " << cellId
-                            << " hoAllowed " << hoAllowed);
-
-                            // --- Lógica de Estado da Célula (igual à anterior) ---
-                            if (!m_scheduleControlMessages)
-                            {
-                                m_rrc->SetSecondaryCellHandoverAllowedStatus(cellId, hoAllowed);
-                            }
-                            else
-                            {
-                                // Usa o timestamp lido do ficheiro
-                                Simulator::Schedule(MilliSeconds(timestamp),
-                                                    &LteEnbRrc::SetSecondaryCellHandoverAllowedStatus,
-                                                    m_rrc,
-                                                    cellId,
-                                                    hoAllowed);
-                            }
-
-                            esCounter++;
-                            lastEsTimestamp = timestamp;
-                        }
-                        else
-                        {
-                            NS_LOG_WARN("Unknown action_type in hierarchical_actions.csv: " << unsigned(action_type)
-                            << " (expected 0 or 1). Linha: " << line);
-                        }
-                    } // Fim do while loop
-
-                    // --- Lógica de Evacuação (igual à anterior) ---
-                    if (esCounter > 0)
-                    {
-                        if (!m_scheduleControlMessages)
-                        {
-                            m_rrc->EvictUsersFromSecondaryCell();
-                        }
-                        else
-                        {
-                            Simulator::Schedule(MilliSeconds(lastEsTimestamp + 0.001), // Pequeno offset
-                                                &LteEnbRrc::EvictUsersFromSecondaryCell,
-                                                m_rrc);
-                        }
+                        m_rrc->EvictUsersFromSecondaryCell();
                     }
-                }
-                else if (m_controlFilename.find("qos_actions.csv") != std::string::npos)
-                { // TODO adapt to the scheduling of the messages
-                    long long timestamp{};
-                    std::unordered_map<uint16_t, double> uePercentages{};
-                    NS_LOG_INFO("Read QoS command");
-                    while (std::getline(csv, line))
+                    else
                     {
-                        if (line == "")
-                        {
-                            // skip empty lines
-                            continue;
-                        }
-
-                        std::stringstream lineStream(line);
-                        std::string data;
-
-                        std::getline(lineStream, data, ',');
-                        timestamp = std::stoll(data);
-
-                        uint16_t ueId;
-                        std::getline(lineStream, data, ',');
-                        // uncomment the next line if need to remove PLM ID, first 3 digits always 111
-                        // cell.erase(0, 3);
-                        ueId = std::stoi(data);
-
-                        double uePerc;
-                        std::getline(lineStream, data, ',');
-                        uePerc = std::stof(data);
-                        if (uePerc < 0 || uePerc > 1)
-                        {
-                            NS_LOG_ERROR("Wrong value for ueid " << uePerc << " percentage ");
-                        }
-                        else
-                        {
-                            NS_LOG_INFO("Set ue percentage command with timestamp "
-                            << timestamp << " ueId " << ueId << "percentage" << uePerc);
-                            uePercentages.insert({ueId, uePerc});
-                        }
+                        Simulator::Schedule(
+                            MilliSeconds(lastEsTimestamp + 0.001), // Pequeno offset
+                            &LteEnbRrc::EvictUsersFromSecondaryCell,
+                            m_rrc);
                     }
-
-                    auto ueMap = m_rrc->GetUeMap();
-                    for (std::pair<uint64_t, double> uePercentage : uePercentages)
-                    {
-                        uint16_t ueId = m_rrc->GetRntiFromImsi(uePercentage.first);
-                        if (ueMap.find(ueId) == ueMap.end())
-                        {
-                            NS_LOG_ERROR(ueId << " not found in UeMap");
-                            NS_LOG_ERROR("Current map status:");
-                            for (std::pair<uint16_t, ns3::Ptr<ns3::UeManager>> ue : ueMap)
-                            {
-                                NS_LOG_ERROR(ue.first);
-                            }
-                            NS_FATAL_ERROR("Wrong UE RNTI passed by the controller, aborting...");
-                        }
-                        double percentage = uePercentage.second;
-                        this->SetUeQoS(ueId, percentage);
-                    }
-                }
-                else
-                {
-                    NS_FATAL_ERROR(
-                        "Unknown use case not implemented yet with filename: " << m_controlFilename);
-                }
-
-                csv.close();
-
-                if (!m_scheduleControlMessages)
-                { // no need to delete stuff in this mode
-                    // This clears the written file without deleting the OS file reference.
-                    std::ofstream csvDelete{};
-                    csvDelete.open(m_controlFilename.c_str());
-
-                    NS_LOG_INFO("File flushed");
                 }
             }
+            else if (m_controlFilename.find("qos_actions.csv") != std::string::npos)
+            { // TODO adapt to the scheduling of the messages
+                long long timestamp{};
+                std::unordered_map<uint16_t, double> uePercentages{};
+                NS_LOG_INFO("Read QoS command");
+                while (std::getline(csv, line))
+                {
+                    if (line == "")
+                    {
+                        // skip empty lines
+                        continue;
+                    }
 
-            // Since the message digestion and the control are mutually exclusive,
-            // there is no need to reschedule this action again in the first case.
-            if (!m_scheduleControlMessages)
+                    std::stringstream lineStream(line);
+                    std::string data;
+
+                    std::getline(lineStream, data, ',');
+                    timestamp = std::stoll(data);
+
+                    uint16_t ueId;
+                    std::getline(lineStream, data, ',');
+                    // uncomment the next line if need to remove PLM ID, first 3 digits always 111
+                    // cell.erase(0, 3);
+                    ueId = std::stoi(data);
+
+                    double uePerc;
+                    std::getline(lineStream, data, ',');
+                    uePerc = std::stof(data);
+                    if (uePerc < 0 || uePerc > 1)
+                    {
+                        NS_LOG_ERROR("Wrong value for ueid " << uePerc << " percentage ");
+                    }
+                    else
+                    {
+                        NS_LOG_INFO("Set ue percentage command with timestamp "
+                                    << timestamp << " ueId " << ueId << "percentage" << uePerc);
+                        uePercentages.insert({ueId, uePerc});
+                    }
+                }
+
+                auto ueMap = m_rrc->GetUeMap();
+                for (std::pair<uint64_t, double> uePercentage : uePercentages)
+                {
+                    uint16_t ueId = m_rrc->GetRntiFromImsi(uePercentage.first);
+                    if (ueMap.find(ueId) == ueMap.end())
+                    {
+                        NS_LOG_ERROR(ueId << " not found in UeMap");
+                        NS_LOG_ERROR("Current map status:");
+                        for (std::pair<uint16_t, ns3::Ptr<ns3::UeManager>> ue : ueMap)
+                        {
+                            NS_LOG_ERROR(ue.first);
+                        }
+                        NS_FATAL_ERROR("Wrong UE RNTI passed by the controller, aborting...");
+                    }
+                    double percentage = uePercentage.second;
+                    this->SetUeQoS(ueId, percentage);
+                }
+            }
+            else
             {
-                // Now that we have a semaphore control, the code will stop, thus avoiding endless
-                // function calls This means that we can safely fix the check at each m_e2Periodicity
-                // (which will be always delayed by 5ms due to the settomgs in the constructor)
-                Simulator::Schedule(Seconds(m_e2Periodicity), &LteEnbNetDevice::ReadControlFile, this);
+                NS_FATAL_ERROR(
+                    "Unknown use case not implemented yet with filename: " << m_controlFilename);
+            }
+
+            csv.close();
+
+            if (!m_scheduleControlMessages)
+            { // no need to delete stuff in this mode
+                // This clears the written file without deleting the OS file reference.
+                std::ofstream csvDelete{};
+                csvDelete.open(m_controlFilename.c_str());
+
+                NS_LOG_INFO("File flushed");
             }
         }
+
+        // Since the message digestion and the control are mutually exclusive,
+        // there is no need to reschedule this action again in the first case.
+        if (!m_scheduleControlMessages)
+        {
+            // Now that we have a semaphore control, the code will stop, thus avoiding endless
+            // function calls This means that we can safely fix the check at each m_e2Periodicity
+            // (which will be always delayed by 5ms due to the settomgs in the constructor)
+            Simulator::Schedule(Seconds(m_e2Periodicity), &LteEnbNetDevice::ReadControlFile, this);
+        }
     }
+}
 
     void
     LteEnbNetDevice::SetUeQoS(uint16_t ueId, double percentage)
