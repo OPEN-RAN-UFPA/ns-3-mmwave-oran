@@ -152,7 +152,7 @@ PrintGnuplottableEnbListToFile (std::string filename)
 
 // Parâmetros Comuns
 static ns3::GlobalValue g_simTime ("simTime", "Simulation time in seconds", ns3::DoubleValue (10.0), ns3::MakeDoubleChecker<double> (0.1, 1000.0));
-static ns3::GlobalValue g_ues ("ues", "Number of UEs for each mmWave ENB.", ns3::UintegerValue (3), ns3::MakeUintegerChecker<uint8_t> ()); // Ajustado para corresponder ao seu log
+static ns3::GlobalValue g_ues ("ues", "Number of UEs for each mmWave ENB.", ns3::UintegerValue (9), ns3::MakeUintegerChecker<uint8_t> ()); // Ajustado para corresponder ao seu log
 static ns3::GlobalValue g_indicationPeriodicity ("indicationPeriodicity", "E2 Indication Periodicity reports (value in seconds)", ns3::DoubleValue (0.1), ns3::MakeDoubleChecker<double> (0.01, 2.0));
 static ns3::GlobalValue g_configuration ("configuration", "Set the wanted configuration to emulate [0,2]", ns3::UintegerValue (0), ns3::MakeUintegerChecker<uint8_t> ()); // Ajustado para corresponder ao seu log
 static ns3::GlobalValue g_trafficModel ("trafficModel", "Type of the traffic model [0,3]", ns3::UintegerValue (3), ns3::MakeUintegerChecker<uint8_t> ()); // Ajustado para corresponder ao seu log
@@ -169,7 +169,7 @@ static ns3::GlobalValue g_minSpeed ("minSpeed", "minimum UE speed in m/s", ns3::
 static ns3::GlobalValue g_maxSpeed ("maxSpeed", "maximum UE speed in m/s", ns3::DoubleValue (4.0), ns3::MakeDoubleChecker<double> ());
 
 // Parâmetros Técnicos (comuns ou de um dos cenários)
-static ns3::GlobalValue g_bufferSize ("bufferSize", "RLC tx buffer size (MB)", ns3::UintegerValue (10), ns3::MakeUintegerChecker<uint32_t> ());
+static ns3::GlobalValue g_bufferSize ("bufferSize", "RLC tx buffer size (MB)", ns3::UintegerValue (1), ns3::MakeUintegerChecker<uint32_t> ());
 static ns3::GlobalValue g_rlcAmEnabled ("rlcAmEnabled", "If true, use RLC AM, else use RLC UM", ns3::BooleanValue (true), ns3::MakeBooleanChecker ());
 static ns3::GlobalValue g_enableTraces ("enableTraces", "If true, generate ns-3 traces", ns3::BooleanValue (true), ns3::MakeBooleanChecker ());
 static ns3::GlobalValue g_e2lteEnabled ("e2lteEnabled", "If true, send LTE E2 reports", ns3::BooleanValue (true), ns3::MakeBooleanChecker ());
@@ -340,7 +340,7 @@ main (int argc, char *argv[])
   switch (configuration)
   {
     case 0:
-      centerFrequency = 850e6; bandwidth = 20e6; isd = 1000;
+      centerFrequency = 850e6; bandwidth = 20e6; isd = 1700;
       numAntennasMcUe = 1; numAntennasMmWave = 1;
       dataRate = (dataRateFromConf == 0 ? "1.5Mbps" : "4.5Mbps");
       break;
@@ -674,49 +674,64 @@ main (int argc, char *argv[])
     }
     break;
 
-    case 3: { // Mistura: 25% Full Buffer, 25% Bursty Alto, 25% Bursty Médio, 25% Bursty Baixo
+    case 3: {
+      // Text: "mixture of four heterogeneous traffic models"
       for (uint32_t u = 0; u < ueNodes.GetN (); ++u)
       {
-        // Instala Sinks na UE
-        PacketSinkHelper dlPacketSinkUdp ("ns3::UdpSocketFactory", InetSocketAddress (Ipv4Address::GetAny (), 1234));
-        sinkApp.Add (dlPacketSinkUdp.Install (ueNodes.Get (u))); // Sink UDP para Full Buffer
+        // Instala Sinks (Receptores) na UE para TCP e UDP
         PacketSinkHelper dlPacketSinkTcp ("ns3::TcpSocketFactory", InetSocketAddress (Ipv4Address::GetAny (), 1235));
-        sinkApp.Add(dlPacketSinkTcp.Install(ueNodes.Get(u))); // Sink TCP para Bursty
+        sinkApp.Add(dlPacketSinkTcp.Install(ueNodes.Get(u)));
+        PacketSinkHelper dlPacketSinkUdp ("ns3::UdpSocketFactory", InetSocketAddress (Ipv4Address::GetAny (), 1234));
+        sinkApp.Add (dlPacketSinkUdp.Install (ueNodes.Get (u)));
 
-        if (u % 4 == 0) // Full Buffer
+        // Destination Address (UE)
+        AddressValue ueSinkAddrTcp(InetSocketAddress(ueIpIface.GetAddress(u), 1235));
+        AddressValue ueSinkAddrUdp(InetSocketAddress(ueIpIface.GetAddress(u), 1234));
+
+        if (u % 4 == 0) // 25%: TCP full-buffer, 20 Mbps
         {
-          UdpClientHelper dlClient (ueIpIface.GetAddress (u), 1234); // Cliente no Host Remoto
-          dlClient.SetAttribute ("MaxPackets", UintegerValue (UINT32_MAX));
-          dlClient.SetAttribute ("PacketSize", UintegerValue (1280));
-          // Define data rate com base na configuração
-          DataRate targetRate;
-          if (configuration == 2) targetRate = DataRate("40Mbps"); // Taxa maior para mmWave
-          else targetRate = DataRate("20Mbps"); // Taxa menor para sub-6GHz
-          Time pktInterval = Seconds(1280.0 * 8.0 / targetRate.GetBitRate());
-          dlClient.SetAttribute ("Interval", TimeValue (pktInterval));
-          clientApp.Add (dlClient.Install (remoteHost));
+          // Note: Text says "TCP full-buffer... with a data rate of 20 Mbps".
+          // We use OnOff with TCP, High OnTime, and specific DataRate to limit to 20Mbps.
+          OnOffHelper client = clientHelperTcp;
+          client.SetAttribute("Remote", ueSinkAddrTcp);
+          client.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=100.0]")); // Always ON
+          client.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0.0]"));
+          client.SetAttribute("DataRate", StringValue("20Mbps"));
+          clientApp.Add(client.Install(remoteHost));
         }
-        else // Bursty TCP (Cliente na UE enviando para Sink TCP na UE)
+        else if (u % 4 == 1) // 25%: UDP bursty, Avg 20 Mbps
         {
-          AddressValue ueSinkAddr(InetSocketAddress(ueIpIface.GetAddress(u), 1235));
-          if (u % 4 == 1) // Bursty Alto (usa dataRate principal)
-          {
-            OnOffHelper client = clientHelperTcp; // Cria cópia
-            client.SetAttribute("Remote", ueSinkAddr);
-            clientApp.Add (client.Install (ueNodes.Get (u)));
-          }
-          else if (u % 4 == 2) // Bursty Médio (750kbps)
-          {
-            OnOffHelper client = clientHelperTcp750; // Cria cópia
-            client.SetAttribute("Remote", ueSinkAddr);
-            clientApp.Add (client.Install (ueNodes.Get (u)));
-          }
-          else if (u % 4 == 3) // Bursty Baixo (150kbps)
-          {
-            OnOffHelper client = clientHelperTcp150; // Cria cópia
-            client.SetAttribute("Remote", ueSinkAddr);
-            clientApp.Add (client.Install (ueNodes.Get (u)));
-          }
+          // Text: "UDP bursty... averaging around 20 Mbps"
+          // Assuming Exp(1.0) for ON and OFF, Duty Cycle is 50%.
+          // Peak rate must be 40Mbps to average 20Mbps.
+          OnOffHelper client = clientHelperUdp;
+          client.SetAttribute("Remote", ueSinkAddrUdp);
+          client.SetAttribute("OnTime", StringValue ("ns3::ExponentialRandomVariable[Mean=1.0]"));
+          client.SetAttribute("OffTime", StringValue ("ns3::ExponentialRandomVariable[Mean=1.0]"));
+          client.SetAttribute("DataRate", StringValue("40Mbps"));
+          clientApp.Add(client.Install(remoteHost));
+        }
+        else if (u % 4 == 2) // 25%: TCP bursty, Avg 750 kbps
+        {
+          // Text: "TCP bursty... averaging 750 kb/s"
+          // Peak rate = 1.5 Mbps (50% duty cycle)
+          OnOffHelper client = clientHelperTcp;
+          client.SetAttribute("Remote", ueSinkAddrTcp);
+          client.SetAttribute("OnTime", StringValue ("ns3::ExponentialRandomVariable[Mean=1.0]"));
+          client.SetAttribute("OffTime", StringValue ("ns3::ExponentialRandomVariable[Mean=1.0]"));
+          client.SetAttribute("DataRate", StringValue("1.5Mbps"));
+          clientApp.Add(client.Install(remoteHost));
+        }
+        else if (u % 4 == 3) // 25%: TCP bursty, Avg 150 kbps
+        {
+          // Text: "TCP bursty... averaging 150 kbps"
+          // Peak rate = 300 kbps (50% duty cycle)
+          OnOffHelper client = clientHelperTcp;
+          client.SetAttribute("Remote", ueSinkAddrTcp);
+          client.SetAttribute("OnTime", StringValue ("ns3::ExponentialRandomVariable[Mean=1.0]"));
+          client.SetAttribute("OffTime", StringValue ("ns3::ExponentialRandomVariable[Mean=1.0]"));
+          client.SetAttribute("DataRate", StringValue("300kbps"));
+          clientApp.Add(client.Install(remoteHost));
         }
       }
       break;
