@@ -15,12 +15,18 @@
  *
  * Authors: Combined work from scenario-one and scenario-three.
  * Original Authors: Andrea Lacava, Michele Polese, Matteo Bordin
+ * * Research Implementation: Elioth Luy, working on the research paper of MSc. Kleber Vilhena.
+ * Affiliation: Federal University of Pará (UFPA).
  */
 
 /**
  * @file scenario-hierarchical.cc
  * @brief This scenario combines the functionalities of Traffic Steering (TS) and Energy Saving (ES).
- * It is designed to be controlled by a hierarchical RL agent.
+ *
+ * @details
+ * This implementation utilizes "Scenario One" and "Scenario Three" (Traffic Steering and Energy Saving)
+ * for the use and control of a Deep Reinforcement Learning (DRL) agent. It employs online training
+ * without heuristics, ensuring that the control is performed exclusively by the DRL model.
  *
  * Key features:
  * 1.  Accepts control actions for both forced handovers (TS) and cell ON/OFF state (ES)
@@ -30,7 +36,6 @@
  * which is crucial for the ES agent's observation.
  * 4.  Combines all configurable parameters from both original scenarios.
  */
-
 #include "ns3/core-module.h"
 #include "ns3/network-module.h"
 #include "ns3/internet-module.h"
