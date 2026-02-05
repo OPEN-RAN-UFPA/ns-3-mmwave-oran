@@ -1,20 +1,18 @@
 /* -*-  Mode: C++; c-file-style: "gnu"; indent-tabs-mode:nil; -*- */
-/* *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation;
+/*
+ * Este programa é software livre; você pode redistribuí-lo e/ou modificá-lo
+ * sob os termos da Licença Pública Geral GNU versão 2.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Autores Originais: Andrea Lacava <thecave003@gmail.com>
+ * Michele Polese <michele.polese@gmail.com>
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- *
- * Authors: Andrea Lacava <thecave003@gmail.com>
- *          Michele Polese <michele.polese@gmail.com>
+ * Adaptação para Pesquisa de Mestrado (Jussilea Gurjão de Figueiredo):
+ * Desenvolvedor: Elioth Luy Almeida da Silva (Iniciação Científica)
+ * * Descrição das Modificações para Gerenciamento de QoS Dinâmico:
+ * - Intensificação de tráfego para treinamento de modelos DRL.
+ * - Adição de taxas de dados configuráveis por perfil de tráfego (Slices).
+ * - Implementação de logging para métricas de proxy de energia.
+ * - Otimização para experimentos de trade-off entre Latência vs. Energia.
  */
 
 #include "ns3/core-module.h"
@@ -33,11 +31,20 @@ using namespace ns3;
 using namespace mmwave;
 
 /**
- * Scenario Two
- * 
+ * Scenario QoS - Dynamic Slicing for DRL Training
+ *
+ * This scenario is designed to create network congestion and resource
+ * scarcity conditions that force the DRL agent to learn meaningful
+ * policies for balancing latency and energy consumption.
+ *
+ * Key modifications from scenario-two:
+ * 1. Higher eMBB data rates to saturate the network
+ * 2. More frequent URLLC bursts to create latency-sensitive traffic
+ * 3. Configurable traffic parameters via command line
+ * 4. Enhanced logging for energy proxy metrics
  */
 
-NS_LOG_COMPONENT_DEFINE ("ScenarioTwo");
+NS_LOG_COMPONENT_DEFINE ("ScenarioQoS");
 
 void
 PrintGnuplottableUeListToFile (std::string filename)
@@ -124,8 +131,13 @@ PrintGnuplottableEnbListToFile (std::string filename)
     }
 }
 
+/**
+ * Save QoS Load Balance metrics to file
+ * This is essential for the Python environment to calculate lte_load_balance
+ */
 void
-SaveLoadBalanceQoSValueToFile (std::string filename,  Ptr<LteEnbNetDevice> lteEnb, std::vector<Ptr<MmWaveEnbNetDevice>> mmWaveGnbs)
+SaveLoadBalanceQoSValueToFile (std::string filename, Ptr<LteEnbNetDevice> lteEnb,
+                                std::vector<Ptr<MmWaveEnbNetDevice>> mmWaveGnbs)
 {
   std::ofstream outFile;
 
@@ -141,21 +153,21 @@ SaveLoadBalanceQoSValueToFile (std::string filename,  Ptr<LteEnbNetDevice> lteEn
   std::map<uint16_t, double>
       loadBalancingMap; // key is the mmWave cell Id, value is the QoS Load balancing for that cell
 
-  // We calculate first the Load balancing of the LTE Cell
+  // Calculate the Load balancing of the LTE Cell
   double lteLoadBalance = 0.0;
   double ueQos;
   for (auto ue : lteEnb->GetRrc ()->GetUeMap ())
     {
-      ueQos = lteEnb->GetUeQoS (ue.first); // Here we use the RNTI since all the UEs are connected to the LTE eNB
+      ueQos = lteEnb->GetUeQoS (ue.first);
       lteLoadBalance += ueQos;
       NS_LOG_LOGIC ("LTE Load Balance for " << ue.second->GetImsi () << " is " << ueQos
                                            << ", complex (cell " << lteEnb->GetCellId ()
                                            << ") : " << lteLoadBalance);
     }
 
-  // We know that the QoS of each UE on the mmWave cell is 1 - LTE QoS and we exploit it for calculate the QoS for each cell
+  // Calculate mmWave load balance (1 - LTE QoS)
   double mmwaLoadBalance;
-  for (auto mmWaveGnb : mmWaveGnbs) // Total cost of these nested loops is the number of UEs (same of the LTE loop)
+  for (auto mmWaveGnb : mmWaveGnbs)
     {
       mmwaLoadBalance = 0.0;
       for (auto ue : mmWaveGnb->GetRrc ()->GetUeMap ())
@@ -168,8 +180,8 @@ SaveLoadBalanceQoSValueToFile (std::string filename,  Ptr<LteEnbNetDevice> lteEn
       loadBalancingMap[mmWaveGnb->GetCellId ()] = mmwaLoadBalance;
     }
 
-  // Log everything to file
-  // Format is timestamp,ueImsiComplete,QoS.CellLoadBalance.Lte,NrCellId,QoS.CellLoadBalance.Nr
+  // Log to file
+  // Format: timestamp,ueImsiComplete,QoS.CellLoadBalance.Lte,NrCellId,QoS.CellLoadBalance.Nr
   uint64_t timestamp = lteEnb->GetStartTime () + (uint64_t) Simulator::Now ().GetMilliSeconds ();
   std::string ueImsiString;
   for (auto mmWaveGnb : mmWaveGnbs)
@@ -187,6 +199,8 @@ SaveLoadBalanceQoSValueToFile (std::string filename,  Ptr<LteEnbNetDevice> lteEn
   outFile.close ();
 }
 
+// ==================== GLOBAL VALUES ====================
+// Buffer size - keep at 10MB to allow bufferbloat and measurable latency
 static ns3::GlobalValue g_bufferSize ("bufferSize", "RLC tx buffer size (MB)",
                                       ns3::UintegerValue (10),
                                       ns3::MakeUintegerChecker<uint32_t> ());
@@ -194,9 +208,10 @@ static ns3::GlobalValue g_bufferSize ("bufferSize", "RLC tx buffer size (MB)",
 static ns3::GlobalValue g_rlcAmEnabled ("rlcAmEnabled", "If true, use RLC AM, else use RLC UM",
                                         ns3::BooleanValue (true), ns3::MakeBooleanChecker ());
 
+// Traffic type percentages
 static ns3::GlobalValue g_PercUEeMBB ("PercUEeMBB",
                                         "Percentage of UEs to deploy for eMBB traffic model",
-                                        ns3::DoubleValue (0.3),
+                                        ns3::DoubleValue (0.4),  // Increased from 0.3
                                         ns3::MakeDoubleChecker<double> ());
 
 static ns3::GlobalValue g_PercUEURLLC ("PercUEURLLC",
@@ -204,92 +219,111 @@ static ns3::GlobalValue g_PercUEURLLC ("PercUEURLLC",
                                         ns3::DoubleValue (0.3),
                                         ns3::MakeDoubleChecker<double> ());
 
+// QoS split percentages (initial values, controlled by agent)
 static ns3::GlobalValue g_qoSeMBB ("qoSeMBB",
-                                        "Percentage of UEs to deploy for eMBB traffic model",
+                                        "Initial QoS split for eMBB (-1 means agent controlled)",
                                         ns3::DoubleValue (-1),
                                         ns3::MakeDoubleChecker<double> (-1, 1.0));
 
 static ns3::GlobalValue g_qoSURLLC ("qoSURLLC",
-                                        "Percentage of UEs to deploy for URLLC traffic model",
+                                        "Initial QoS split for URLLC (-1 means agent controlled)",
                                         ns3::DoubleValue (-1),
                                         ns3::MakeDoubleChecker<double> (-1, 1.0));
 
 static ns3::GlobalValue g_qoSmIoT ("qoSmIoT",
-                                        "Percentage of UEs to deploy for URLLC traffic model",
+                                        "Initial QoS split for mIoT (-1 means agent controlled)",
                                         ns3::DoubleValue (-1),
                                         ns3::MakeDoubleChecker<double> (-1, 1.0));
 
-static ns3::GlobalValue q_useSemaphores ("useSemaphores", "If true, enables the use of semaphores for external environment control",
+// ==================== NEW: TRAFFIC INTENSITY PARAMETERS ====================
+// These allow fine-tuning the network load via command line
+
+static ns3::GlobalValue g_embbDataRate ("embbDataRate",
+                                        "Data rate for eMBB traffic in Mbps (use high values to saturate)",
+                                        ns3::DoubleValue (50.0),  // 50 Mbps per eMBB user
+                                        ns3::MakeDoubleChecker<double> (0.1, 1000.0));
+
+static ns3::GlobalValue g_urllcDataRate ("urllcDataRate",
+                                        "Data rate for URLLC traffic in kbps",
+                                        ns3::DoubleValue (500.0),  // Increased from 89.3 kbps
+                                        ns3::MakeDoubleChecker<double> (1.0, 10000.0));
+
+static ns3::GlobalValue g_miotDataRate ("miotDataRate",
+                                        "Data rate for mIoT traffic in kbps",
+                                        ns3::DoubleValue (100.0),  // Increased from 44.6 kbps
+                                        ns3::MakeDoubleChecker<double> (1.0, 1000.0));
+
+static ns3::GlobalValue g_urllcBurstMean ("urllcBurstMean",
+                                        "Mean ON time for URLLC bursts in seconds",
+                                        ns3::DoubleValue (0.005),  // 5ms bursts (more frequent)
+                                        ns3::MakeDoubleChecker<double> (0.001, 1.0));
+
+static ns3::GlobalValue g_urllcOffMean ("urllcOffMean",
+                                        "Mean OFF time for URLLC in seconds",
+                                        ns3::DoubleValue (0.01),  // 10ms between bursts
+                                        ns3::MakeDoubleChecker<double> (0.0, 1.0));
+
+// ==================== CONTROL PARAMETERS ====================
+static ns3::GlobalValue q_useSemaphores ("useSemaphores",
+                                        "If true, enables semaphores for external environment control (REQUIRED for Gym)",
                                         ns3::BooleanValue (true), ns3::MakeBooleanChecker ());
 
 static ns3::GlobalValue g_configuration ("configuration", "Set the RF configuration [0,2]",
                                          ns3::UintegerValue (1),
                                          ns3::MakeUintegerChecker<uint8_t> ());
 
-static ns3::GlobalValue g_ues ("ues", "Number of UEs for each mmWave gNB.", ns3::UintegerValue (7),
+static ns3::GlobalValue g_ues ("ues", "Number of UEs for each mmWave gNB.",
+                               ns3::UintegerValue (10),  // Increased from 7 for higher density
                                ns3::MakeUintegerChecker<uint8_t> ());
 
-static ns3::GlobalValue g_simTime ("simTime", "Simulation time in seconds", ns3::DoubleValue (1.9),
+static ns3::GlobalValue g_simTime ("simTime", "Simulation time in seconds",
+                                   ns3::DoubleValue (10.0),  // Longer episodes for DRL
                                    ns3::MakeDoubleChecker<double> (0.1, 1000.0));
 
-static ns3::GlobalValue g_policy ("policy", "Placeholder to let the controller understand which policy to implement.\n"
-                                          "0 is Single Agent xApp Policy, "
-                                          "1 is Random Policy, "
-                                          "2 is Throughput based Policy, "
-                                          "3 is Sinr based Policy, and 4 is a MultiAgent xApp Policy\n"
-                                          "This value is not used in the script, but in the SemCallback", 
-                                          ns3::UintegerValue (0),
-                                          ns3::MakeUintegerChecker<uint8_t> ());
+static ns3::GlobalValue g_policy ("policy",
+                                  "Policy type: 0=SingleAgent, 1=Random, 2=Throughput, 3=SINR, 4=MultiAgent",
+                                  ns3::UintegerValue (0),
+                                  ns3::MakeUintegerChecker<uint8_t> ());
 
-static ns3::GlobalValue g_controlFileName ("controlFileName", "The path to the control file (can be absolute)",
-                                     ns3::StringValue ("qos_actions.csv"), ns3::MakeStringChecker ());
+static ns3::GlobalValue g_controlFileName ("controlFileName",
+                                     "Path to control file for agent actions",
+                                     ns3::StringValue ("qos_actions.csv"),
+                                     ns3::MakeStringChecker ());
 
-static ns3::GlobalValue g_indicationPeriodicity ("indicationPeriodicity", "E2 Indication Periodicity reports (value in seconds)", ns3::DoubleValue (0.1),
+static ns3::GlobalValue g_indicationPeriodicity ("indicationPeriodicity",
+                                   "E2 Indication Periodicity in seconds",
+                                   ns3::DoubleValue (0.1),
                                    ns3::MakeDoubleChecker<double> (0.01, 2.0));
 
+// ==================== MAIN FUNCTION ====================
 int
 main (int argc, char *argv[])
 {
-
-  // std::freopen("stdout.txt", "a", stdout);
-  // std::freopen("stderr.txt", "a", stderr);
-
   LogComponentEnableAll (LOG_PREFIX_ALL);
-  LogComponentEnable ("ScenarioTwo", LOG_LEVEL_INFO);
+  LogComponentEnable ("ScenarioQoS", LOG_LEVEL_INFO);
   LogComponentEnable ("LteEnbNetDevice", LOG_LEVEL_INFO);
   LogComponentEnable ("MmWaveEnbNetDevice", LOG_LEVEL_INFO);
-  // LogComponentEnable ("OnOffApplication", LOG_LEVEL_INFO);
   LogComponentEnable ("MmWaveBearerStatsCalculator", LOG_LEVEL_FUNCTION);
   LogComponentEnable ("LteStatsCalculator", LOG_LEVEL_FUNCTION);
   LogComponentEnable ("RadioBearerStatsCalculator", LOG_LEVEL_FUNCTION);
   LogComponentEnable ("LteRlcAm", LOG_LEVEL_FUNCTION);
   LogComponentEnable ("MmWaveBearerStatsConnector", LOG_LEVEL_FUNCTION);
   LogComponentEnable ("RadioBearerStatsConnector", LOG_LEVEL_FUNCTION);
-  // LogComponentEnable ("MmWaveUeMac", LOG_LEVEL_ALL);
-  // LogComponentEnable ("MmWaveEnbMac", LOG_LEVEL_ALL);
-  // LogComponentEnable ("LteUeMac", LOG_LEVEL_ALL);
-  // LogComponentEnable ("LteEnbMac", LOG_LEVEL_ALL);
-  // LogComponentEnable ("MmWaveFlexTtiMacScheduler", LOG_LEVEL_ALL);
   LogComponentEnable ("LteEnbRrc", LOG_LEVEL_INFO);
-  // LogComponentEnable ("LteUeRrc", LOG_LEVEL_ALL);
   LogComponentEnable ("McEnbPdcp", LOG_LEVEL_FUNCTION);
   LogComponentEnable ("McUePdcp", LOG_LEVEL_INFO);
-  // LogComponentEnable ("RicControlMessage", LOG_LEVEL_ALL);
-  // LogComponentEnable ("Asn1Types", LOG_LEVEL_LOGIC);
-  // LogComponentEnable ("E2Termination", LOG_LEVEL_LOGIC);
-  // LogComponentEnable ("MmWaveSpectrumPhy", LOG_LEVEL_ALL);
 
-  // The maximum X coordinate of the scenario
+  // Scenario dimensions
   double maxXAxis = 4000;
-  // The maximum Y coordinate of the scenario
   double maxYAxis = 4000;
 
-  // Command line arguments
+  // Parse command line arguments
   CommandLine cmd;
   cmd.Parse (argc, argv);
 
   bool harqEnabled = true;
 
+  // Get global values
   UintegerValue uintegerValue;
   BooleanValue booleanValue;
   StringValue stringValue;
@@ -316,42 +350,59 @@ main (int argc, char *argv[])
   GlobalValue::GetValueByName ("indicationPeriodicity", doubleValue);
   double indicationPeriodicity = doubleValue.Get ();
 
+  // Get traffic intensity parameters
+  GlobalValue::GetValueByName ("embbDataRate", doubleValue);
+  double embbDataRateMbps = doubleValue.Get ();
+  GlobalValue::GetValueByName ("urllcDataRate", doubleValue);
+  double urllcDataRateKbps = doubleValue.Get ();
+  GlobalValue::GetValueByName ("miotDataRate", doubleValue);
+  double miotDataRateKbps = doubleValue.Get ();
+  GlobalValue::GetValueByName ("urllcBurstMean", doubleValue);
+  double urllcBurstMean = doubleValue.Get ();
+  GlobalValue::GetValueByName ("urllcOffMean", doubleValue);
+  double urllcOffMean = doubleValue.Get ();
+
+  // Validate percentages
   if (PercUEeMBB + PercUEURLLC > 1)
     {
       NS_FATAL_ERROR ("The total percentage of UEs for each traffic model is higher than 1: "
                       << PercUEeMBB + PercUEURLLC);
     }
 
-  NS_LOG_INFO ("rlcAmEnabled " << rlcAmEnabled << " bufferSize " << bufferSize
-                                 << " percentage UEs eMBB " << PercUEeMBB
-                                 << " percentage UEs URLLC " << PercUEURLLC
-                                 << " QoS percentage eMBB " << qoSeMBB
-                                 << " QoS percentage URLLC " << qoSURLLC 
-                                 << " QoS percentage mIoT " << qoSmIoT
-                                 << " controlFilename " << controlFilename
-                                 << " useSemaphores " << useSemaphores
-                                 << " indicationPeriodicity " << indicationPeriodicity);
+  NS_LOG_INFO ("========== SCENARIO QoS CONFIGURATION ==========");
+  NS_LOG_INFO ("rlcAmEnabled: " << rlcAmEnabled);
+  NS_LOG_INFO ("bufferSize: " << bufferSize << " MB");
+  NS_LOG_INFO ("useSemaphores: " << useSemaphores);
+  NS_LOG_INFO ("controlFilename: " << controlFilename);
+  NS_LOG_INFO ("indicationPeriodicity: " << indicationPeriodicity << " s");
+  NS_LOG_INFO ("--- Traffic Distribution ---");
+  NS_LOG_INFO ("PercUEeMBB: " << PercUEeMBB * 100 << "%");
+  NS_LOG_INFO ("PercUEURLLC: " << PercUEURLLC * 100 << "%");
+  NS_LOG_INFO ("PercUEmIoT: " << (1 - PercUEeMBB - PercUEURLLC) * 100 << "%");
+  NS_LOG_INFO ("--- Traffic Intensity ---");
+  NS_LOG_INFO ("eMBB DataRate: " << embbDataRateMbps << " Mbps per UE");
+  NS_LOG_INFO ("URLLC DataRate: " << urllcDataRateKbps << " kbps per UE");
+  NS_LOG_INFO ("mIoT DataRate: " << miotDataRateKbps << " kbps per UE");
+  NS_LOG_INFO ("URLLC Burst Mean: " << urllcBurstMean * 1000 << " ms");
+  NS_LOG_INFO ("URLLC Off Mean: " << urllcOffMean * 1000 << " ms");
+  NS_LOG_INFO ("--- QoS Initial Split ---");
+  NS_LOG_INFO ("qoSeMBB: " << (qoSeMBB == -1 ? "Agent Controlled" : std::to_string(qoSeMBB)));
+  NS_LOG_INFO ("qoSURLLC: " << (qoSURLLC == -1 ? "Agent Controlled" : std::to_string(qoSURLLC)));
+  NS_LOG_INFO ("qoSmIoT: " << (qoSmIoT == -1 ? "Agent Controlled" : std::to_string(qoSmIoT)));
+  NS_LOG_INFO ("================================================");
 
+  // Configure ns-3 defaults
   Config::SetDefault ("ns3::MmWaveHelper::E2ModeLte", BooleanValue(true));
   Config::SetDefault ("ns3::MmWaveHelper::E2ModeNr", BooleanValue(true));
   Config::SetDefault ("ns3::MmWaveHelper::E2Periodicity", DoubleValue (indicationPeriodicity));
-  
-  // The DU PM reports should come from both NR gNB as well as LTE eNB, 
-  // since in the RLC/MAC/PHY entities are present in BOTH NR gNB as well as LTE eNB.
+
   Config::SetDefault ("ns3::MmWaveEnbNetDevice::EnableDuReport", BooleanValue(true));
-
   Config::SetDefault ("ns3::LteEnbNetDevice::ControlFileName", StringValue (controlFilename));
-
   Config::SetDefault ("ns3::LteEnbNetDevice::UseSemaphores", BooleanValue (useSemaphores));
-
-  // The CU-UP PM reports should only come from LTE eNB, since in the NS3 “EN-DC 
-  // simulation (Option 3A)”, the PDCP is only in the LTE eNB and NOT in the NR gNB
   Config::SetDefault ("ns3::MmWaveEnbNetDevice::EnableCuUpReport", BooleanValue(true));
   Config::SetDefault ("ns3::LteEnbNetDevice::EnableCuUpReport", BooleanValue(true));
-
   Config::SetDefault ("ns3::MmWaveEnbNetDevice::EnableCuCpReport", BooleanValue(true));
   Config::SetDefault ("ns3::LteEnbNetDevice::EnableCuCpReport", BooleanValue(true));
-
   Config::SetDefault ("ns3::LteEnbNetDevice::EnableE2FileLogging", BooleanValue (true));
   Config::SetDefault ("ns3::MmWaveEnbNetDevice::EnableE2FileLogging", BooleanValue (true));
 
@@ -369,29 +420,23 @@ main (int argc, char *argv[])
   Config::SetDefault ("ns3::ThreeGppChannelConditionModel::UpdatePeriod", TimeValue (MilliSeconds (100)));
 
   Config::SetDefault ("ns3::LteRlcAm::ReportBufferStatusTimer", TimeValue (MilliSeconds (10.0)));
-  Config::SetDefault ("ns3::LteRlcUmLowLat::ReportBufferStatusTimer",
-                      TimeValue (MilliSeconds (10.0)));
+  Config::SetDefault ("ns3::LteRlcUmLowLat::ReportBufferStatusTimer", TimeValue (MilliSeconds (10.0)));
   Config::SetDefault ("ns3::LteRlcUm::MaxTxBufferSize", UintegerValue (bufferSize * 1024 * 1024));
-  Config::SetDefault ("ns3::LteRlcUmLowLat::MaxTxBufferSize",
-                      UintegerValue (bufferSize * 1024 * 1024));
+  Config::SetDefault ("ns3::LteRlcUmLowLat::MaxTxBufferSize", UintegerValue (bufferSize * 1024 * 1024));
   Config::SetDefault ("ns3::LteRlcAm::MaxTxBufferSize", UintegerValue (bufferSize * 1024 * 1024));
 
-  // Carrier bandwidth in Hz
+  // RF Configuration
   double bandwidth;
-  // Center frequency in Hz
   double centerFrequency;
-  // Distance between the mmWave BSs and the two co-located LTE and mmWave BSs in meters
-  double isd; // (interside distance)
-  // Number of antennas in each UE
+  double isd;
   int numAntennasMcUe;
-  // Number of antennas in each mmWave BS
   int numAntennasMmWave;
 
   GlobalValue::GetValueByName ("configuration", uintegerValue);
   uint8_t configuration = uintegerValue.Get ();
   switch (configuration)
     {
-    case 0:
+    case 0:  // Sub-6 GHz (low capacity)
       centerFrequency = 850e6;
       bandwidth = 20e6;
       isd = 1000;
@@ -399,24 +444,24 @@ main (int argc, char *argv[])
       numAntennasMmWave = 1;
       break;
 
-    case 1:
+    case 1:  // Mid-band (balanced)
       centerFrequency = 3.5e9;
-      bandwidth = 20e6;
-      isd = 1000;
-      numAntennasMcUe = 1;
-      numAntennasMmWave = 1;
+      bandwidth = 100e6;  // Increased bandwidth
+      isd = 500;          // Reduced ISD for denser deployment
+      numAntennasMcUe = 4;
+      numAntennasMmWave = 16;
       break;
 
-    case 2:
+    case 2:  // mmWave (high capacity)
       centerFrequency = 28e9;
-      bandwidth = 100e6;
+      bandwidth = 400e6;  // Maximum mmWave bandwidth
       isd = 200;
       numAntennasMcUe = 16;
       numAntennasMmWave = 64;
       break;
 
     default:
-      NS_FATAL_ERROR ("Configuration not recognized" << configuration);
+      NS_FATAL_ERROR ("Configuration not recognized: " << configuration);
       break;
     }
 
@@ -427,10 +472,9 @@ main (int argc, char *argv[])
   mmwaveHelper->SetPathlossModelType ("ns3::ThreeGppUmiStreetCanyonPropagationLossModel");
   mmwaveHelper->SetChannelConditionModelType ("ns3::ThreeGppUmiStreetCanyonChannelConditionModel");
 
-  // Set the number of antennas in the devices
   mmwaveHelper->SetUePhasedArrayModelAttribute("NumColumns", UintegerValue(std::sqrt(numAntennasMcUe)));
   mmwaveHelper->SetUePhasedArrayModelAttribute("NumRows", UintegerValue(std::sqrt(numAntennasMcUe)));
-  mmwaveHelper->SetEnbPhasedArrayModelAttribute("NumColumns",UintegerValue(std::sqrt(numAntennasMmWave)));
+  mmwaveHelper->SetEnbPhasedArrayModelAttribute("NumColumns", UintegerValue(std::sqrt(numAntennasMmWave)));
   mmwaveHelper->SetEnbPhasedArrayModelAttribute("NumRows", UintegerValue(std::sqrt(numAntennasMmWave)));
 
   Ptr<MmWavePointToPointEpcHelper> epcHelper = CreateObject<MmWavePointToPointEpcHelper> ();
@@ -440,14 +484,18 @@ main (int argc, char *argv[])
   uint8_t nLteEnbNodes = 1;
   GlobalValue::GetValueByName ("ues", uintegerValue);
   uint32_t ues = uintegerValue.Get ();
-  uint8_t nUeNodes = ues * nMmWaveEnbNodes;
+  uint16_t nUeNodes = ues * nMmWaveEnbNodes;  // Changed to uint16_t for larger counts
 
-  NS_LOG_INFO (" Bandwidth " << bandwidth << " centerFrequency " << centerFrequency << " isd "
-                             << isd << " numAntennasMcUe " << numAntennasMcUe
-                             << " numAntennasMmWave " << numAntennasMmWave << " nMmWaveEnbNodes "
-                             << unsigned (nMmWaveEnbNodes) << " nUeNodes " << unsigned (nUeNodes));
+  NS_LOG_INFO ("--- Network Topology ---");
+  NS_LOG_INFO ("Bandwidth: " << bandwidth / 1e6 << " MHz");
+  NS_LOG_INFO ("Center Frequency: " << centerFrequency / 1e9 << " GHz");
+  NS_LOG_INFO ("ISD: " << isd << " m");
+  NS_LOG_INFO ("mmWave gNBs: " << unsigned(nMmWaveEnbNodes));
+  NS_LOG_INFO ("LTE eNBs: " << unsigned(nLteEnbNodes));
+  NS_LOG_INFO ("UEs per gNB: " << ues);
+  NS_LOG_INFO ("Total UEs: " << nUeNodes);
 
-  // Get SGW/PGW and create a single RemoteHost
+  // Create nodes
   Ptr<Node> pgw = epcHelper->GetPgwNode ();
   NodeContainer remoteHostContainer;
   remoteHostContainer.Create (1);
@@ -455,7 +503,7 @@ main (int argc, char *argv[])
   InternetStackHelper internet;
   internet.Install (remoteHostContainer);
 
-  // Create the Internet by connecting remoteHost to pgw. Setup routing too
+  // Internet connection
   PointToPointHelper p2ph;
   p2ph.SetDeviceAttribute ("DataRate", DataRateValue (DataRate ("100Gb/s")));
   p2ph.SetDeviceAttribute ("Mtu", UintegerValue (2500));
@@ -463,16 +511,13 @@ main (int argc, char *argv[])
   NetDeviceContainer internetDevices = p2ph.Install (pgw, remoteHost);
   Ipv4AddressHelper ipv4h;
   ipv4h.SetBase ("1.0.0.0", "255.0.0.0");
-  // Ipv4InterfaceContainer internetIpIfaces = 
   ipv4h.Assign (internetDevices);
-  // interface 0 is localhost, 1 is the p2p device
-  // Ipv4Address remoteHostAddr = internetIpIfaces.GetAddress (1);
   Ipv4StaticRoutingHelper ipv4RoutingHelper;
   Ptr<Ipv4StaticRouting> remoteHostStaticRouting =
       ipv4RoutingHelper.GetStaticRouting (remoteHost->GetObject<Ipv4> ());
   remoteHostStaticRouting->AddNetworkRouteTo (Ipv4Address ("7.0.0.0"), Ipv4Mask ("255.0.0.0"), 1);
 
-  // create LTE, mmWave eNB nodes and UE node
+  // Create network nodes
   NodeContainer ueNodes;
   NodeContainer mmWaveEnbNodes;
   NodeContainer lteEnbNodes;
@@ -483,20 +528,14 @@ main (int argc, char *argv[])
   allEnbNodes.Add (lteEnbNodes);
   allEnbNodes.Add (mmWaveEnbNodes);
 
-  // Position
+  // Position allocation
   Vector centerPosition = Vector (maxXAxis / 2, maxYAxis / 2, 3);
-
-  // Install Mobility Model
   Ptr<ListPositionAllocator> enbPositionAlloc = CreateObject<ListPositionAllocator> ();
-
-  // We want a center with one LTE enb and one mmWave co-located in the same place
   enbPositionAlloc->Add (centerPosition);
   enbPositionAlloc->Add (centerPosition);
 
   double x, y;
   double nConstellation = nMmWaveEnbNodes - 1;
-
-  // This guarantee that each of the rest BSs is placed at the same distance from the two co-located in the center
   for (int8_t i = 0; i < nConstellation; ++i)
     {
       x = isd * cos ((2 * M_PI * i) / (nConstellation));
@@ -514,156 +553,171 @@ main (int argc, char *argv[])
   uePositionAlloc->SetY (centerPosition.y);
   uePositionAlloc->SetRho (0.7 * isd);
 
+  // Configure UE mobility by traffic type
   uint32_t countUe;
-  // eMBB
-  for (countUe = 0; countUe < ueNodes.GetN () * PercUEeMBB; countUe++)
+  uint32_t numEmbbUes = (uint32_t)(ueNodes.GetN () * PercUEeMBB);
+  uint32_t numUrllcUes = (uint32_t)(ueNodes.GetN () * PercUEURLLC);
+
+  // eMBB UEs - low mobility
+  for (countUe = 0; countUe < numEmbbUes; countUe++)
     {
       MobilityHelper uemobilityeMBB;
-
-      // low mobility m/s
       Ptr<UniformRandomVariable> speed = CreateObject<UniformRandomVariable> ();
-      speed->SetAttribute ("Min", DoubleValue (0.3)); // 1 km/h
-      speed->SetAttribute ("Max", DoubleValue (3)); // 10 km/h
-
+      speed->SetAttribute ("Min", DoubleValue (0.3));
+      speed->SetAttribute ("Max", DoubleValue (3));
       uemobilityeMBB.SetMobilityModel ("ns3::RandomWalk2dOutdoorMobilityModel", "Speed",
                                        PointerValue (speed), "Bounds",
                                        RectangleValue (Rectangle (0, maxXAxis, 0, maxYAxis)));
-
       uemobilityeMBB.SetPositionAllocator (uePositionAlloc);
       uemobilityeMBB.Install (ueNodes.Get (countUe));
-      NS_LOG_INFO ("Node " << countUe + 1 << " is eMBB");
+      NS_LOG_INFO ("UE " << countUe + 1 << " configured as eMBB (low mobility)");
     }
 
-  // URLLC
-  for (; countUe < ueNodes.GetN () * PercUEeMBB + ueNodes.GetN () * PercUEURLLC; countUe++)
-    { 
+  // URLLC UEs - high mobility
+  for (; countUe < numEmbbUes + numUrllcUes; countUe++)
+    {
       MobilityHelper uemobilityURLLC;
-      // high mobility m/s
       Ptr<UniformRandomVariable> speed = CreateObject<UniformRandomVariable> ();
-      speed->SetAttribute ("Min", DoubleValue (3)); // 10 km/h
-      speed->SetAttribute ("Max", DoubleValue (13.8)); // 50 km/h
-
+      speed->SetAttribute ("Min", DoubleValue (5));   // 18 km/h
+      speed->SetAttribute ("Max", DoubleValue (20));  // 72 km/h (vehicular)
       uemobilityURLLC.SetMobilityModel ("ns3::RandomWalk2dOutdoorMobilityModel", "Speed",
                                   PointerValue (speed), "Bounds",
                                   RectangleValue (Rectangle (0, maxXAxis, 0, maxYAxis)));
       uemobilityURLLC.SetPositionAllocator (uePositionAlloc);
       uemobilityURLLC.Install (ueNodes.Get (countUe));
-      NS_LOG_INFO ("Node " << countUe + 1 << " is uRLLC");
+      NS_LOG_INFO ("UE " << countUe + 1 << " configured as URLLC (high mobility)");
     }
 
-  // mIoT 
+  // mIoT UEs - static
   for (; countUe < ueNodes.GetN (); countUe++)
     {
       MobilityHelper uemobilitymIoT;
-      // static mobility m/s
       uemobilitymIoT.SetPositionAllocator (uePositionAlloc);
+      uemobilitymIoT.SetMobilityModel ("ns3::ConstantPositionMobilityModel");
       uemobilitymIoT.Install (ueNodes.Get (countUe));
-      NS_LOG_INFO ("Node " << countUe + 1 << " is mIoT");
+      NS_LOG_INFO ("UE " << countUe + 1 << " configured as mIoT (static)");
     }
 
-  // Install mmWave, lte, mc Devices to the nodes
+  // Install devices
   NetDeviceContainer lteEnbDevs = mmwaveHelper->InstallLteEnbDevice (lteEnbNodes);
   NetDeviceContainer mmWaveEnbDevs = mmwaveHelper->InstallEnbDevice (mmWaveEnbNodes);
   NetDeviceContainer mcUeDevs = mmwaveHelper->InstallMcUeDevice (ueNodes);
 
-  // Install the IP stack on the UEs
   internet.Install (ueNodes);
   Ipv4InterfaceContainer ueIpIface;
   ueIpIface = epcHelper->AssignUeIpv4Address (NetDeviceContainer (mcUeDevs));
-  // Assign IP address to UEs, and install applications
+
   for (uint32_t u = 0; u < ueNodes.GetN (); ++u)
     {
       Ptr<Node> ueNode = ueNodes.Get (u);
-      // Set the default gateway for the UE
       Ptr<Ipv4StaticRouting> ueStaticRouting =
           ipv4RoutingHelper.GetStaticRouting (ueNode->GetObject<Ipv4> ());
       ueStaticRouting->SetDefaultRoute (epcHelper->GetUeDefaultGatewayAddress (), 1);
     }
 
-  // Add X2 interfaces
   mmwaveHelper->AddX2Interface (lteEnbNodes, mmWaveEnbNodes);
-
-  // Manual attachment
   mmwaveHelper->AttachToClosestEnb (mcUeDevs, mmWaveEnbDevs, lteEnbDevs);
 
-  // Install and start applications
+  // ==================== APPLICATION SETUP ====================
   ApplicationContainer sinkApp;
-  
-  // In the traffic models loop we also set the QoS parameter
   Ptr<LteEnbNetDevice> eNBDevice = DynamicCast<LteEnbNetDevice> (lteEnbDevs.Get (0));
-
   ApplicationContainer clientApp;
   PacketSinkHelper dlPacketSinkHelper ("ns3::UdpSocketFactory",
                                        InetSocketAddress (Ipv4Address::GetAny (), 1234));
 
-  // eMBB
-  for (countUe = 0; countUe < ueNodes.GetN () * PercUEeMBB; countUe++)
+  // Build data rate strings
+  std::stringstream embbRateStream;
+  embbRateStream << embbDataRateMbps << "Mbps";
+  std::string embbRateStr = embbRateStream.str();
+
+  std::stringstream urllcRateStream;
+  urllcRateStream << urllcDataRateKbps << "kbps";
+  std::string urllcRateStr = urllcRateStream.str();
+
+  std::stringstream miotRateStream;
+  miotRateStream << miotDataRateKbps << "kbps";
+  std::string miotRateStr = miotRateStream.str();
+
+  std::stringstream urllcOnTimeStream;
+  urllcOnTimeStream << "ns3::ExponentialRandomVariable[Mean=" << urllcBurstMean << "]";
+  std::string urllcOnTimeStr = urllcOnTimeStream.str();
+
+  std::stringstream urllcOffTimeStream;
+  urllcOffTimeStream << "ns3::ExponentialRandomVariable[Mean=" << urllcOffMean << "]";
+  std::string urllcOffTimeStr = urllcOffTimeStream.str();
+
+  NS_LOG_INFO ("--- Application Configuration ---");
+
+  // eMBB Applications - High throughput using OnOff with high data rate
+  for (countUe = 0; countUe < numEmbbUes; countUe++)
     {
       sinkApp.Add (dlPacketSinkHelper.Install (ueNodes.Get (countUe)));
-      UdpClientHelper embbClient (ueIpIface.GetAddress (countUe), 1234);
-      embbClient.SetAttribute ("Interval", TimeValue (MicroSeconds (2560))); // 4 Mbit/s
-      embbClient.SetAttribute ("MaxPackets", UintegerValue (0)); // Zero means infinite
-      embbClient.SetAttribute ("PacketSize", UintegerValue (1280));
-      clientApp.Add (embbClient.Install (remoteHost));
 
-      // QoS traffic split setup
+      OnOffHelper embbApp ("ns3::UdpSocketFactory",
+                           InetSocketAddress (ueIpIface.GetAddress (countUe), 1234));
+      embbApp.SetAttribute ("PacketSize", UintegerValue (1400));  // Near MTU for efficiency
+      embbApp.SetAttribute ("OnTime", StringValue ("ns3::ConstantRandomVariable[Constant=1]"));
+      embbApp.SetAttribute ("OffTime", StringValue ("ns3::ConstantRandomVariable[Constant=0]"));
+      embbApp.SetAttribute ("DataRate", StringValue (embbRateStr));
+      clientApp.Add (embbApp.Install (remoteHost));
+
+      NS_LOG_INFO ("eMBB UE " << countUe + 1 << ": DataRate=" << embbRateStr);
+
       if (qoSeMBB != -1)
         {
-          Ptr<McUeNetDevice> ueDevice = DynamicCast<McUeNetDevice> (ueNodes.Get (countUe));
+          Ptr<McUeNetDevice> ueDevice = DynamicCast<McUeNetDevice> (mcUeDevs.Get (countUe));
           uint64_t ueIdRnti = eNBDevice->GetRrc ()->GetRntiFromImsi (ueDevice->GetImsi ());
-          NS_LOG_INFO ("[eMBB] Setting UE with IMSI " << ueDevice->GetImsi () << " PDCP split to "
-                                                        << qoSeMBB);
-          Simulator::Schedule (MilliSeconds (100), &LteEnbNetDevice::SetUeQoS, eNBDevice, ueIdRnti,
-                               qoSeMBB);
+          NS_LOG_INFO ("[eMBB] UE IMSI " << ueDevice->GetImsi () << " initial QoS split: " << qoSeMBB);
+          Simulator::Schedule (MilliSeconds (100), &LteEnbNetDevice::SetUeQoS, eNBDevice, ueIdRnti, qoSeMBB);
         }
     }
 
-  // URLLC
-  for (countUe++; countUe < ueNodes.GetN () * PercUEeMBB + ueNodes.GetN () * PercUEURLLC; countUe++)
+  // URLLC Applications - Frequent bursts for latency-sensitive traffic
+  for (; countUe < numEmbbUes + numUrllcUes; countUe++)
     {
       sinkApp.Add (dlPacketSinkHelper.Install (ueNodes.Get (countUe)));
-  
-      OnOffHelper onOffAppUrllc ("ns3::UdpSocketFactory",
-                                 InetSocketAddress (ueIpIface.GetAddress (countUe), 1234));
-      onOffAppUrllc.SetAttribute ("PacketSize", UintegerValue (128));
-      onOffAppUrllc.SetAttribute ("OnTime", StringValue ("ns3::ExponentialRandomVariable[Mean=0.01]"));
-      onOffAppUrllc.SetAttribute ("OffTime",  StringValue ("ns3::ConstantRandomVariable[Constant=0]"));
-      onOffAppUrllc.SetAttribute ("DataRate", StringValue ("89.3kbps"));
-      clientApp.Add (onOffAppUrllc.Install (remoteHost));
 
-      // QoS traffic split setup
+      OnOffHelper urllcApp ("ns3::UdpSocketFactory",
+                            InetSocketAddress (ueIpIface.GetAddress (countUe), 1234));
+      urllcApp.SetAttribute ("PacketSize", UintegerValue (256));  // Small packets for low latency
+      urllcApp.SetAttribute ("OnTime", StringValue (urllcOnTimeStr));
+      urllcApp.SetAttribute ("OffTime", StringValue (urllcOffTimeStr));
+      urllcApp.SetAttribute ("DataRate", StringValue (urllcRateStr));
+      clientApp.Add (urllcApp.Install (remoteHost));
+
+      NS_LOG_INFO ("URLLC UE " << countUe + 1 << ": DataRate=" << urllcRateStr
+                   << ", BurstMean=" << urllcBurstMean * 1000 << "ms");
+
       if (qoSURLLC != -1)
         {
-          Ptr<McUeNetDevice> ueDevice = DynamicCast<McUeNetDevice> (ueNodes.Get (countUe));
+          Ptr<McUeNetDevice> ueDevice = DynamicCast<McUeNetDevice> (mcUeDevs.Get (countUe));
           uint64_t ueIdRnti = eNBDevice->GetRrc ()->GetRntiFromImsi (ueDevice->GetImsi ());
-          NS_LOG_INFO ("[URLLC] Setting UE with IMSI " << ueDevice->GetImsi ()
-                                                         << " PDCP split to " << qoSURLLC);
-          Simulator::Schedule (MilliSeconds (100), &LteEnbNetDevice::SetUeQoS, eNBDevice, ueIdRnti,
-                               qoSURLLC);
+          NS_LOG_INFO ("[URLLC] UE IMSI " << ueDevice->GetImsi () << " initial QoS split: " << qoSURLLC);
+          Simulator::Schedule (MilliSeconds (100), &LteEnbNetDevice::SetUeQoS, eNBDevice, ueIdRnti, qoSURLLC);
         }
     }
 
-  // mIoT
-  for (countUe++; countUe < ueNodes.GetN (); countUe++)
+  // mIoT Applications - Periodic low-rate transmissions
+  for (; countUe < ueNodes.GetN (); countUe++)
     {
       sinkApp.Add (dlPacketSinkHelper.Install (ueNodes.Get (countUe)));
-      OnOffHelper onOffAppMIoT ("ns3::UdpSocketFactory",
-                                InetSocketAddress (ueIpIface.GetAddress (countUe), 1234));
-      onOffAppMIoT.SetAttribute ("PacketSize", UintegerValue (128));
-      onOffAppMIoT.SetAttribute ("OnTime", StringValue ("ns3::ExponentialRandomVariable[Mean=0.01]"));
-      onOffAppMIoT.SetAttribute ("OffTime", StringValue ("ns3::ConstantRandomVariable[Constant=0]"));
-      onOffAppMIoT.SetAttribute ("DataRate", StringValue ("44.6kbps"));
-      clientApp.Add (onOffAppMIoT.Install (remoteHost));
 
-      // QoS traffic split setup
+      OnOffHelper miotApp ("ns3::UdpSocketFactory",
+                           InetSocketAddress (ueIpIface.GetAddress (countUe), 1234));
+      miotApp.SetAttribute ("PacketSize", UintegerValue (64));  // Very small IoT packets
+      miotApp.SetAttribute ("OnTime", StringValue ("ns3::ExponentialRandomVariable[Mean=0.1]"));
+      miotApp.SetAttribute ("OffTime", StringValue ("ns3::ExponentialRandomVariable[Mean=0.5]"));
+      miotApp.SetAttribute ("DataRate", StringValue (miotRateStr));
+      clientApp.Add (miotApp.Install (remoteHost));
+
+      NS_LOG_INFO ("mIoT UE " << countUe + 1 << ": DataRate=" << miotRateStr);
+
       if (qoSmIoT != -1)
         {
-          Ptr<McUeNetDevice> ueDevice = DynamicCast<McUeNetDevice> (ueNodes.Get (countUe));
+          Ptr<McUeNetDevice> ueDevice = DynamicCast<McUeNetDevice> (mcUeDevs.Get (countUe));
           uint64_t ueIdRnti = eNBDevice->GetRrc ()->GetRntiFromImsi (ueDevice->GetImsi ());
-          NS_LOG_INFO ("[mIot] Setting UE with IMSI " << ueDevice->GetImsi () << " PDCP split to "
-                                                        << qoSmIoT);
-          Simulator::Schedule (MilliSeconds (100), &LteEnbNetDevice::SetUeQoS, eNBDevice, ueIdRnti,
-                               qoSmIoT);
+          NS_LOG_INFO ("[mIoT] UE IMSI " << ueDevice->GetImsi () << " initial QoS split: " << qoSmIoT);
+          Simulator::Schedule (MilliSeconds (100), &LteEnbNetDevice::SetUeQoS, eNBDevice, ueIdRnti, qoSmIoT);
         }
     }
 
@@ -671,24 +725,21 @@ main (int argc, char *argv[])
   GlobalValue::GetValueByName ("simTime", doubleValue);
   double simTime = doubleValue.Get ();
   sinkApp.Start (Seconds (0));
-  
   clientApp.Start (MilliSeconds (50));
   clientApp.Stop (Seconds (simTime));
 
+  // Enable traces
   mmwaveHelper->EnableTraces ();
-
-  // trick to enable PHY traces for the LTE stack
   Ptr<LteHelper> lteHelper = CreateObject<LteHelper> ();
   lteHelper->Initialize ();
   lteHelper->EnablePhyTraces ();
   lteHelper->EnableMacTraces ();
-  // Since nodes are randomly allocated during each run we always need to print their positions
+
   PrintGnuplottableUeListToFile ("ues.txt");
   PrintGnuplottableEnbListToFile ("enbs.txt");
 
-  // Create file to save load balancing values
+  // QoS Load Balancing logging
   std::string loadBalanceFilename = "QoSLoadBalancing.txt";
-
   std::ofstream header_file (loadBalanceFilename.c_str ());
   header_file << "timestamp,ueImsiComplete,QoS.CellLoadBalance.Lte,NrCellId,QoS.CellLoadBalance.Nr"
               << std::endl;
@@ -705,26 +756,30 @@ main (int argc, char *argv[])
         }
       else
         {
-          NS_FATAL_ERROR ("DynamicCast of MmWaveEnbNetDevice failed miserably for " << unsigned (i));
+          NS_FATAL_ERROR ("DynamicCast of MmWaveEnbNetDevice failed for " << unsigned (i));
         }
     }
 
-  // Schedule the tracing of the load balancing values with the same indication periodicity to match the timestamps 
-  double nReports = simTime / indicationPeriodicity; // Number of reports
+  // Schedule load balancing reports
+  double nReports = simTime / indicationPeriodicity;
   double scheduleTime;
   for (int i = 1; i <= nReports; ++i)
     {
       scheduleTime = (i * indicationPeriodicity);
-      NS_LOG_INFO ("Schedule LoadBalancing report at time " << scheduleTime << " s");
       Simulator::Schedule (Seconds (scheduleTime), &SaveLoadBalanceQoSValueToFile,
                            loadBalanceFilename, eNBDevice, mmWaveGnbs);
     }
 
-
   double offset = 0.005;
-  NS_LOG_INFO ("Simulation time is " << simTime + offset << " seconds ");
+  NS_LOG_INFO ("================================================");
+  NS_LOG_INFO ("Simulation time: " << simTime + offset << " seconds");
+  NS_LOG_INFO ("Starting simulation...");
+  NS_LOG_INFO ("================================================");
+
   Simulator::Stop (Seconds (simTime + offset));
   Simulator::Run ();
+
+  NS_LOG_INFO ("Simulation completed.");
   NS_LOG_INFO (lteHelper);
 
   Simulator::Destroy ();
